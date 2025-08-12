@@ -24,12 +24,14 @@ const wss = new WebSocket.Server({ server });
 let sharedGrid = Array.from({ length: ROWS }, () => EMPTY.repeat(COLS));
 // Set of persistent star positions
 let stars = new Set();
+// Track which user last wrote to each cell
+let cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 
 function gridKey(x, y) {
   return `${x},${y}`;
 }
 
-function updateGridRegion(grid, region, ox, oy) {
+function updateGridRegion(grid, region, ox, oy, userId) {
   let newStars = new Set(stars);
   let newGrid = grid.map(row => row.split(''));
   for (let y = 0; y < region.length; y++) {
@@ -38,11 +40,17 @@ function updateGridRegion(grid, region, ox, oy) {
       const gy = oy + y;
       if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
         const prev = newGrid[gy][gx];
+        const prevOwner = cellOwners[gy][gx];
         const next = region[y][x];
-        if (prev !== EMPTY && next !== EMPTY && prev !== next) {
+        if (
+          prev !== EMPTY && next !== EMPTY && prev !== next && prevOwner && prevOwner !== userId
+        ) {
           newStars.add(gridKey(gx, gy));
         }
-        newGrid[gy][gx] = newStars.has(gridKey(gx, gy)) ? STAR : next;
+        if (next !== EMPTY) {
+          newGrid[gy][gx] = newStars.has(gridKey(gx, gy)) ? STAR : next;
+          cellOwners[gy][gx] = userId;
+        }
       }
     }
   }
@@ -72,8 +80,14 @@ wss.on('connection', (ws) => {
         let newStars = new Set(stars);
         for (let y = 0; y < ROWS; y++) {
           for (let x = 0; x < COLS; x++) {
-            if (sharedGrid[y][x] !== EMPTY && data.grid[y][x] !== EMPTY && sharedGrid[y][x] !== data.grid[y][x]) {
+            if (
+              sharedGrid[y][x] !== EMPTY && data.grid[y][x] !== EMPTY && sharedGrid[y][x] !== data.grid[y][x] &&
+              cellOwners[y][x] && cellOwners[y][x] !== id
+            ) {
               newStars.add(gridKey(x, y));
+            }
+            if (data.grid[y][x] !== EMPTY) {
+              cellOwners[y][x] = id;
             }
           }
         }
@@ -85,12 +99,13 @@ wss.on('connection', (ws) => {
       }
       if (data.type === 'region' && Array.isArray(data.region) && typeof data.ox === 'number' && typeof data.oy === 'number') {
         // Region update (camera mode)
-        [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy);
+        [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy, id);
         broadcastGrid();
       }
       if (data.type === 'reset') {
         stars.clear();
         sharedGrid = sharedGrid.map(row => row.replace(/★/g, EMPTY));
+        cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
         broadcastGrid();
       }
     } catch (e) {}
