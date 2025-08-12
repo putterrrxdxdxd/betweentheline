@@ -47,8 +47,8 @@
       document.getElementById('stage').textContent = gridArr.join('\n');
     }
 
-    // WebSocket setup
-    const ws = new WebSocket('ws://localhost:9000');
+    // WebSocket setup (auto-detect protocol/host)
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'id') {
@@ -79,9 +79,9 @@
     // Webcam and ASCII conversion
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const maskCanvas = document.getElementById('mask');
-    const maskCtx = maskCanvas.getContext('2d');
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
 
     // MediaPipe Selfie Segmentation setup
     const selfieSegmentation = new SelfieSegmentation({
