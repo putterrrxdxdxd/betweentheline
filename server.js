@@ -6,6 +6,7 @@ const path = require('path');
 const COLS = 500;
 const ROWS = 200;
 const EMPTY = '.';
+const STAR = '★';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,9 +23,17 @@ const wss = new WebSocket.Server({ server });
 // Map client id to {ascii, offset: {x, y}}
 let players = new Map();
 let wsToId = new Map();
+// Set of persistent star positions
+let stars = new Set();
+
+function gridKey(x, y) {
+  return `${x},${y}`;
+}
 
 function combineGrids() {
   let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+  let cellCounts = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  // First pass: count how many players at each cell
   for (const { ascii, offset } of players.values()) {
     if (!ascii) continue;
     const ox = offset?.x || 0;
@@ -35,9 +44,45 @@ function combineGrids() {
         const gy = oy + y;
         if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
           const ch = ascii[y][x] || EMPTY;
-          if (ch !== EMPTY) grid[gy][gx] = ch;
+          if (ch !== EMPTY) cellCounts[gy][gx] += 1;
         }
       }
+    }
+  }
+  // Mark new stars for overlaps
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (cellCounts[y][x] > 1) {
+        stars.add(gridKey(x, y));
+      }
+    }
+  }
+  // Second pass: render grid, overlaying persistent stars
+  for (const { ascii, offset } of players.values()) {
+    if (!ascii) continue;
+    const ox = offset?.x || 0;
+    const oy = offset?.y || 0;
+    for (let y = 0; y < ascii.length; y++) {
+      for (let x = 0; x < (ascii[y] ? ascii[y].length : 0); x++) {
+        const gx = ox + x;
+        const gy = oy + y;
+        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+          const key = gridKey(gx, gy);
+          if (stars.has(key)) {
+            grid[gy][gx] = STAR;
+          } else {
+            const ch = ascii[y][x] || EMPTY;
+            if (ch !== EMPTY) grid[gy][gx] = ch;
+          }
+        }
+      }
+    }
+  }
+  // Overlay all persistent stars (in case no player is currently on them)
+  for (const key of stars) {
+    const [x, y] = key.split(',').map(Number);
+    if (x >= 0 && x < COLS && y >= 0 && y < ROWS) {
+      grid[y][x] = STAR;
     }
   }
   return grid.map(row => row.join(''));
