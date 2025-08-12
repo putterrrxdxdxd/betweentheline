@@ -10,13 +10,19 @@
       font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', monospace;
       margin: 0;
       padding: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #container {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       height: 100vh;
+      width: 100vw;
+      position: relative;
     }
-    pre {
+    #stage {
       font-size: 14px;
       line-height: 1;
       margin: 0;
@@ -26,12 +32,31 @@
       border: 1px solid #333;
       min-width: 80ch;
       min-height: 20em;
+      width: 100vw;
+      height: calc(100vh - 48px);
+      box-sizing: border-box;
+      overflow: auto;
+      z-index: 1;
     }
     #video {
       display: none;
     }
+    #bottom-bar {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      background: rgba(20,20,20,0.95);
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 8px 0 8px 0;
+      z-index: 10;
+      border-top: 1px solid #333;
+    }
     #reset-btn, #typing-btn {
-      margin-bottom: 10px;
       font-size: 16px;
       padding: 4px 16px;
       background: #222;
@@ -39,10 +64,16 @@
       border: 1px solid #444;
       border-radius: 4px;
       cursor: pointer;
-      margin-right: 8px;
+      margin: 0 4px;
     }
     #reset-btn:hover, #typing-btn:hover {
       background: #333;
+    }
+    #mode-label {
+      color: #aaa;
+      font-size: 15px;
+      margin-right: 12px;
+      font-family: inherit;
     }
   </style>
   <!-- MediaPipe Selfie Segmentation CDN -->
@@ -50,11 +81,14 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
-  <div>
-    <button id="typing-btn">Typing Mode</button>
-    <button id="reset-btn">Reset Stars</button>
+  <div id="container">
+    <pre id="stage" contenteditable="false" spellcheck="false"></pre>
+    <div id="bottom-bar">
+      <span id="mode-label">Mode: Camera</span>
+      <button id="typing-btn">Switch to Typing</button>
+      <button id="reset-btn">Reset Stars</button>
+    </div>
   </div>
-  <pre id="stage" contenteditable="false" spellcheck="false"></pre>
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
@@ -73,10 +107,6 @@
       document.getElementById('stage').textContent = gridArr.join('\n');
     }
 
-    function sendRegion(region, ox, oy) {
-      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
-    }
-
     // WebSocket setup (auto-detect protocol/host)
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
     ws.onmessage = (event) => {
@@ -88,13 +118,15 @@
       }
     };
 
-    // Typing mode toggle
+    // Typing/Camera mode toggle (per user)
     const typingBtn = document.getElementById('typing-btn');
+    const modeLabel = document.getElementById('mode-label');
     const stage = document.getElementById('stage');
     typingBtn.onclick = () => {
       typingMode = !typingMode;
       stage.contentEditable = typingMode ? 'true' : 'false';
-      typingBtn.textContent = typingMode ? 'Camera Mode' : 'Typing Mode';
+      typingBtn.textContent = typingMode ? 'Switch to Camera' : 'Switch to Typing';
+      modeLabel.textContent = typingMode ? 'Mode: Typing' : 'Mode: Camera';
       if (!typingMode && lastGrid) {
         // Restore grid from server when leaving typing mode
         renderStage(lastGrid);
@@ -128,6 +160,11 @@
         ws.send(JSON.stringify({ id: myId, offset: myOffset }));
       }
     });
+
+    // Camera region update
+    function sendRegion(region, ox, oy) {
+      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
+    }
 
     // Webcam and ASCII conversion (only in camera mode)
     const video = document.getElementById('video');

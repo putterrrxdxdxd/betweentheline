@@ -26,14 +26,51 @@ let sharedGrid = Array.from({ length: ROWS }, () => EMPTY.repeat(COLS));
 let stars = new Set();
 // Track which user last wrote to each cell
 let cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+// Track each user's last region (offset and size)
+let userRegions = new Map();
 
 function gridKey(x, y) {
   return `${x},${y}`;
 }
 
+function erasePreviousRegion(grid, owners, prev, userId) {
+  if (!prev) return;
+  let newGrid = grid.map(row => row.split(''));
+  for (let y = 0; y < prev.height; y++) {
+    for (let x = 0; x < prev.width; x++) {
+      const gx = prev.x + x;
+      const gy = prev.y + y;
+      if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+        if (owners[gy][gx] === userId && newGrid[gy][gx] !== STAR) {
+          newGrid[gy][gx] = EMPTY;
+          owners[gy][gx] = null;
+        }
+      }
+    }
+  }
+  return newGrid.map(row => row.join(''));
+}
+
 function updateGridRegion(grid, region, ox, oy, userId) {
   let newStars = new Set(stars);
   let newGrid = grid.map(row => row.split(''));
+  // Erase previous region for this user
+  const prev = userRegions.get(userId);
+  if (prev) {
+    for (let y = 0; y < prev.height; y++) {
+      for (let x = 0; x < prev.width; x++) {
+        const gx = prev.x + x;
+        const gy = prev.y + y;
+        if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+          if (cellOwners[gy][gx] === userId && newGrid[gy][gx] !== STAR) {
+            newGrid[gy][gx] = EMPTY;
+            cellOwners[gy][gx] = null;
+          }
+        }
+      }
+    }
+  }
+  // Draw new region
   for (let y = 0; y < region.length; y++) {
     for (let x = 0; x < region[y].length; x++) {
       const gx = ox + x;
@@ -54,6 +91,8 @@ function updateGridRegion(grid, region, ox, oy, userId) {
       }
     }
   }
+  // Update user's last region
+  userRegions.set(userId, { x: ox, y: oy, width: region[0]?.length || 0, height: region.length });
   return [newGrid.map(row => row.join('')), newStars];
 }
 
@@ -106,6 +145,7 @@ wss.on('connection', (ws) => {
         stars.clear();
         sharedGrid = sharedGrid.map(row => row.replace(/★/g, EMPTY));
         cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+        userRegions = new Map();
         broadcastGrid();
       }
     } catch (e) {}
