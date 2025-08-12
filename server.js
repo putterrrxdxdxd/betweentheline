@@ -1,9 +1,23 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
+const express = require('express');
+const path = require('path');
 
 const COLS = 500;
 const ROWS = 200;
 const EMPTY = '.';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Serve static files
+app.use(express.static(path.join(__dirname)));
+const server = app.listen(PORT, () => {
+  console.log(`HTTP/WS server running on http://localhost:${PORT}`);
+});
+
+// WebSocket server on the same port
+const wss = new WebSocket.Server({ server });
 
 // Map client id to {ascii, offset: {x, y}}
 let players = new Map();
@@ -36,7 +50,6 @@ function randomOffset() {
   };
 }
 
-const wss = new WebSocket.Server({ port: 9000 });
 wss.on('connection', (ws) => {
   const id = uuidv4();
   wsToId.set(ws, id);
@@ -75,5 +88,3 @@ setInterval(() => {
     }
   }
 }, 1000 / 15);
-
-console.log('WebSocket server running on ws://localhost:9000');
