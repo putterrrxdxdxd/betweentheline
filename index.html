@@ -73,6 +73,10 @@
       document.getElementById('stage').textContent = gridArr.join('\n');
     }
 
+    function sendRegion(region, ox, oy) {
+      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
+    }
+
     // WebSocket setup (auto-detect protocol/host)
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
     ws.onmessage = (event) => {
@@ -181,8 +185,8 @@
         }
         asciiGrid.push(row);
       }
-      // In collaborative mode, do not send camera window
-      // sendAsciiGrid(asciiGrid);
+      // In camera mode, send region update
+      sendRegion(asciiGrid, myOffset.x, myOffset.y);
     }
   </script>
 </body>

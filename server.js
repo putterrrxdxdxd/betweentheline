@@ -29,6 +29,26 @@ function gridKey(x, y) {
   return `${x},${y}`;
 }
 
+function updateGridRegion(grid, region, ox, oy) {
+  let newStars = new Set(stars);
+  let newGrid = grid.map(row => row.split(''));
+  for (let y = 0; y < region.length; y++) {
+    for (let x = 0; x < region[y].length; x++) {
+      const gx = ox + x;
+      const gy = oy + y;
+      if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+        const prev = newGrid[gy][gx];
+        const next = region[y][x];
+        if (prev !== EMPTY && next !== EMPTY && prev !== next) {
+          newStars.add(gridKey(gx, gy));
+        }
+        newGrid[gy][gx] = newStars.has(gridKey(gx, gy)) ? STAR : next;
+      }
+    }
+  }
+  return [newGrid.map(row => row.join('')), newStars];
+}
+
 function broadcastGrid() {
   const payload = JSON.stringify({ type: 'grid', grid: sharedGrid });
   for (const ws of wss.clients) {
@@ -48,7 +68,7 @@ wss.on('connection', (ws) => {
     try {
       const data = JSON.parse(msg);
       if (data.type === 'edit' && Array.isArray(data.grid)) {
-        // Overlap detection: mark stars where two or more edits differ from EMPTY
+        // Full grid edit (typing mode)
         let newStars = new Set(stars);
         for (let y = 0; y < ROWS; y++) {
           for (let x = 0; x < COLS; x++) {
@@ -57,16 +77,19 @@ wss.on('connection', (ws) => {
             }
           }
         }
-        // Update grid
         sharedGrid = data.grid.map((row, y) =>
           row.split('').map((ch, x) => newStars.has(gridKey(x, y)) ? STAR : ch).join('')
         );
         stars = newStars;
         broadcastGrid();
       }
+      if (data.type === 'region' && Array.isArray(data.region) && typeof data.ox === 'number' && typeof data.oy === 'number') {
+        // Region update (camera mode)
+        [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy);
+        broadcastGrid();
+      }
       if (data.type === 'reset') {
         stars.clear();
-        // Remove all stars from grid
         sharedGrid = sharedGrid.map(row => row.replace(/★/g, EMPTY));
         broadcastGrid();
       }
