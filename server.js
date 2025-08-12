@@ -115,6 +115,9 @@ wss.on('connection', (ws) => {
         player.offset = data.offset;
         players.set(id, player);
       }
+      if (data.type === 'reset') {
+        stars.clear();
+      }
     } catch (e) {}
   });
 
