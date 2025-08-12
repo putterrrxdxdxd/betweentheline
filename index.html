@@ -30,7 +30,7 @@
     #video {
       display: none;
     }
-    #reset-btn {
+    #reset-btn, #typing-btn {
       margin-bottom: 10px;
       font-size: 16px;
       padding: 4px 16px;
@@ -39,8 +39,9 @@
       border: 1px solid #444;
       border-radius: 4px;
       cursor: pointer;
+      margin-right: 8px;
     }
-    #reset-btn:hover {
+    #reset-btn:hover, #typing-btn:hover {
       background: #333;
     }
   </style>
@@ -49,8 +50,11 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
-  <button id="reset-btn">Reset Stars</button>
-  <pre id="stage" contenteditable="true" spellcheck="false"></pre>
+  <div>
+    <button id="typing-btn">Typing Mode</button>
+    <button id="reset-btn">Reset Stars</button>
+  </div>
+  <pre id="stage" contenteditable="false" spellcheck="false"></pre>
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
@@ -62,13 +66,11 @@
     let myId = null;
     let myOffset = { x: 0, y: 0 };
     let lastGrid = null;
-    let isEditing = false;
+    let typingMode = false;
 
     function renderStage(gridArr) {
       lastGrid = gridArr;
-      if (!isEditing) {
-        document.getElementById('stage').textContent = gridArr.join('\n');
-      }
+      document.getElementById('stage').textContent = gridArr.join('\n');
     }
 
     // WebSocket setup (auto-detect protocol/host)
@@ -82,20 +84,37 @@
       }
     };
 
-    function sendAsciiGrid(grid) {
-      if (myId) {
-        ws.send(JSON.stringify({ id: myId, ascii: grid, offset: myOffset }));
+    // Typing mode toggle
+    const typingBtn = document.getElementById('typing-btn');
+    const stage = document.getElementById('stage');
+    typingBtn.onclick = () => {
+      typingMode = !typingMode;
+      stage.contentEditable = typingMode ? 'true' : 'false';
+      typingBtn.textContent = typingMode ? 'Camera Mode' : 'Typing Mode';
+      if (!typingMode && lastGrid) {
+        // Restore grid from server when leaving typing mode
+        renderStage(lastGrid);
       }
-    }
+    };
+
+    // Send edits in typing mode
+    stage.addEventListener('input', () => {
+      if (!typingMode) return;
+      // Parse edited ASCII grid and send as collaborative edit
+      const lines = stage.textContent.split('\n').slice(0, ROWS);
+      while (lines.length < ROWS) lines.push(' '.repeat(COLS));
+      const grid = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
+      ws.send(JSON.stringify({ type: 'edit', grid }));
+    });
 
     // Reset button
     document.getElementById('reset-btn').onclick = () => {
       ws.send(JSON.stringify({ type: 'reset' }));
     };
 
-    // Keyboard controls for moving offset
+    // Keyboard controls for moving offset (only in camera mode)
     document.addEventListener('keydown', (e) => {
-      if (isEditing) return;
+      if (typingMode) return;
       let changed = false;
       if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
       if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
@@ -106,19 +125,7 @@
       }
     });
 
-    // Editable stage logic
-    const stage = document.getElementById('stage');
-    stage.addEventListener('focus', () => { isEditing = true; });
-    stage.addEventListener('blur', () => { isEditing = false; });
-    stage.addEventListener('input', () => {
-      // Parse edited ASCII grid and send as your camera window
-      const lines = stage.textContent.split('\n').slice(0, ROWS);
-      while (lines.length < ROWS) lines.push(' '.repeat(COLS));
-      const grid = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
-      sendAsciiGrid(grid);
-    });
-
-    // Webcam and ASCII conversion
+    // Webcam and ASCII conversion (only in camera mode)
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -137,7 +144,7 @@
     // Camera setup
     const camera = new Camera(video, {
       onFrame: async () => {
-        if (!isEditing) await selfieSegmentation.send({ image: video });
+        if (!typingMode) await selfieSegmentation.send({ image: video });
       },
       width: 640,
       height: 480
@@ -145,7 +152,7 @@
     camera.start();
 
     function onSegmentationResults(results) {
-      if (isEditing) return;
+      if (typingMode) return;
       // Draw the mask to maskCanvas
       maskCtx.clearRect(0, 0, COLS, ROWS);
       maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
@@ -174,7 +181,8 @@
         }
         asciiGrid.push(row);
       }
-      sendAsciiGrid(asciiGrid);
+      // In collaborative mode, do not send camera window
+      // sendAsciiGrid(asciiGrid);
     }
   </script>
 </body>
