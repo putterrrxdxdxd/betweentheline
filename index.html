@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Between the Lines - ASCII Camera Stage</title>
+  <style>
+    body {
+      background: #000;
+      color: #fff;
+      font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', monospace;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    pre {
+      font-size: 14px;
+      line-height: 1;
+      margin: 0;
+      user-select: none;
+    }
+    #video {
+      display: none;
+    }
+  </style>
+  <!-- MediaPipe Selfie Segmentation CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <pre id="stage"></pre>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
+  <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
+  <script>
+    // ASCII characters from dark to light
+    const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
+    const COLS = 160;
+    const ROWS = 60;
+    let myId = null;
+    let myOffset = { x: 0, y: 0 };
+
+    function renderStage(gridArr) {
+      document.getElementById('stage').textContent = gridArr.join('\n');
+    }
+
+    // WebSocket setup
+    const ws = new WebSocket('ws://localhost:9000');
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'id') {
+        myId = data.id;
+      } else if (data.type === 'grid') {
+        renderStage(data.grid);
+      }
+    };
+
+    function sendAsciiGrid(grid) {
+      if (myId) {
+        ws.send(JSON.stringify({ id: myId, ascii: grid, offset: myOffset }));
+      }
+    }
+
+    // Keyboard controls for moving offset
+    document.addEventListener('keydown', (e) => {
+      let changed = false;
+      if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
+      if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
+      if (e.key === 'ArrowLeft' || e.key === 'a') { myOffset.x = Math.max(0, myOffset.x - 2); changed = true; }
+      if (e.key === 'ArrowRight' || e.key === 'd') { myOffset.x = Math.min(500 - 160, myOffset.x + 2); changed = true; }
+      if (changed) {
+        ws.send(JSON.stringify({ id: myId, offset: myOffset }));
+      }
+    });
+
+    // Webcam and ASCII conversion
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const maskCanvas = document.getElementById('mask');
+    const maskCtx = maskCanvas.getContext('2d');
+
+    // MediaPipe Selfie Segmentation setup
+    const selfieSegmentation = new SelfieSegmentation({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+    });
+    selfieSegmentation.setOptions({
+      modelSelection: 1
+    });
+    selfieSegmentation.onResults(onSegmentationResults);
+
+    // Camera setup
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await selfieSegmentation.send({ image: video });
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+
+    function onSegmentationResults(results) {
+      // Draw the mask to maskCanvas
+      maskCtx.clearRect(0, 0, COLS, ROWS);
+      maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
+      // Draw the video frame to canvas
+      ctx.drawImage(video, 0, 0, COLS, ROWS);
+      const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
+      const maskData = maskCtx.getImageData(0, 0, COLS, ROWS).data;
+      const asciiGrid = [];
+      for (let y = 0; y < ROWS; y++) {
+        let row = '';
+        for (let x = 0; x < COLS; x++) {
+          const idx = (y * COLS + x) * 4;
+          // Use mask alpha to determine if this pixel is person or background
+          const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
+          if (isPerson) {
+            const r = imgData[idx];
+            const g = imgData[idx + 1];
+            const b = imgData[idx + 2];
+            // Luminance
+            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
+            row += ASCII_CHARS[charIdx];
+          } else {
+            row += '.';
+          }
+        }
+        asciiGrid.push(row);
+      }
+      sendAsciiGrid(asciiGrid);
+    }
+  </script>
+</body>
+</html>
