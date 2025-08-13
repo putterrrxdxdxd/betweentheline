@@ -104,14 +104,10 @@
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
   <script>
     // Mixed gradient (ASCII + Thai/Khmer) from light to dark for better luminance steps
-    const ASCII_CHARS = [
-      ' ', '.', '·', ':', '-', '=', '+', '*',
-      'ក', 'គ', 'ข', 'ญ', 'ณ', 'ฬ', 'ฮ',
-      '░', '▒', '▓', '█'
-    ];
+    const ASCII_CHARS = [ ' ', '.', ':', '-', '=', '*', '#', '█' ];
 
-    const COLS = 160;
-    const ROWS = 60;
+    const COLS = 128; // client region width
+    const ROWS = 48;  // client region height
     let myId = null;
     let myOffset = { x: 0, y: 0 };
     let lastGrid = null;
@@ -119,6 +115,8 @@
     let overlapPool = [];
     let localGrid = null;
     let localColor = null;
+    let lastRegionStr = null;
+    let lastSentAt = 0;
 
     const stage = document.getElementById('stage');
 
@@ -160,15 +158,31 @@
       stage.innerHTML = html;
     }
 
-    function applyPatches(baseArr, patches, rowLength) {
+    function applyPatches(baseArr, patches) {
       if (!baseArr) return null;
       const arr = baseArr.slice();
-      for (const p of patches) {
+      for (const p of patches || []) {
         const row = arr[p.y];
         if (!row) continue;
         const before = row.slice(0, p.x);
         const after = row.slice(p.x + p.text.length);
         arr[p.y] = before + p.text + after;
+      }
+      return arr;
+    }
+    function applyBlocks(baseArr, blocks) {
+      if (!baseArr) return null;
+      const arr = baseArr.slice();
+      for (const b of blocks || []) {
+        for (let i = 0; i < b.lines.length; i++) {
+          const y = b.y + i;
+          const line = b.lines[i];
+          const row = arr[y];
+          if (!row) continue;
+          const before = row.slice(0, b.x);
+          const after = row.slice(b.x + line.length);
+          arr[y] = before + line + after;
+        }
       }
       return arr;
     }
@@ -186,8 +200,10 @@
         localColor = data.colorMap;
         renderStage(localGrid, localColor);
       } else if (data.type === 'patch') {
-        localGrid = applyPatches(localGrid, data.gridPatches, COLS);
-        localColor = applyPatches(localColor, data.colorPatches, COLS);
+        localGrid = applyPatches(localGrid, data.gridPatches);
+        localGrid = applyBlocks(localGrid, data.gridBlocks);
+        localColor = applyPatches(localColor, data.colorPatches);
+        localColor = applyBlocks(localColor, data.colorBlocks);
         renderStage(localGrid, localColor);
       } else if (data.type === 'pool') {
         overlapPool = data.pool;
@@ -289,8 +305,8 @@
 
     const camera = new Camera(video, {
       onFrame: async () => { await selfieSegmentation.send({ image: video }); },
-      width: 640,
-      height: 480
+      width: 320,
+      height: 240
     });
     camera.start();
 
@@ -320,7 +336,14 @@
         }
         asciiGrid.push(row);
       }
-      sendRegion(asciiGrid, myOffset.x, myOffset.y);
+      // Throttle to ~12 FPS and skip identical frames
+      const now = Date.now();
+      const regionStr = asciiGrid.join('\n');
+      if (regionStr !== lastRegionStr && (now - lastSentAt) > 80) {
+        sendRegion(asciiGrid, myOffset.x, myOffset.y);
+        lastRegionStr = regionStr;
+        lastSentAt = now;
+      }
     }
   </script>
 </body>

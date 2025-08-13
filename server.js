@@ -3,8 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const path = require('path');
 
-const COLS = 500;
-const ROWS = 200;
+const COLS = 400;
+const ROWS = 160;
 const EMPTY = '.';
 const STAR = '★';
 
@@ -115,7 +115,7 @@ function updateGridRegion(grid, region, ox, oy, userId) {
           const overlapText = randomOverlapText();
           for (let k = 0; k < overlapText.length && gx + k < COLS; k++) {
             newGrid[gy][gx + k] = overlapText[k];
-            stars.add(gridKey(gx + k, gy));
+            newStars.add(gridKey(gx + k, gy));
           }
         }
         if (next !== EMPTY) {
@@ -154,7 +154,6 @@ function getColorMap() {
 function broadcastGridNow() {
   const newColorMap = getColorMap();
   if (!global.lastBroadcastGrid || !global.lastBroadcastColorMap) {
-    // First time: send full
     const payload = JSON.stringify({ type: 'grid', grid: sharedGrid, colorMap: newColorMap });
     for (const ws of wss.clients) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -165,14 +164,14 @@ function broadcastGridNow() {
     global.lastBroadcastColorMap = newColorMap.map(r => r);
     return;
   }
-  const gridPatches = computePatches(global.lastBroadcastGrid, sharedGrid);
-  const colorPatches = computePatches(global.lastBroadcastColorMap, newColorMap);
-  if (gridPatches.length === 0 && colorPatches.length === 0) return;
-  const payload = JSON.stringify({ type: 'patch', gridPatches, colorPatches });
+  const gridPatchesRaw = computePatches(global.lastBroadcastGrid, sharedGrid);
+  const colorPatchesRaw = computePatches(global.lastBroadcastColorMap, newColorMap);
+  const { blocks: gridBlocks, remaining: gridPatches } = compressVerticalBlocks(gridPatchesRaw);
+  const { blocks: colorBlocks, remaining: colorPatches } = compressVerticalBlocks(colorPatchesRaw);
+  if (gridPatches.length === 0 && colorPatches.length === 0 && gridBlocks.length === 0 && colorBlocks.length === 0) return;
+  const payload = JSON.stringify({ type: 'patch', gridPatches, colorPatches, gridBlocks, colorBlocks });
   for (const ws of wss.clients) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
-    }
+    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
   }
   global.lastBroadcastGrid = sharedGrid.map(r => r);
   global.lastBroadcastColorMap = newColorMap.map(r => r);
@@ -200,6 +199,48 @@ function computePatches(oldArr, newArr) {
     }
   }
   return patches;
+}
+
+function compressVerticalBlocks(patches) {
+  // Merge patches with same x and same text length across consecutive rows
+  const byRow = new Map();
+  for (const p of patches) {
+    if (!byRow.has(p.y)) byRow.set(p.y, []);
+    byRow.get(p.y).push(p);
+  }
+  for (const arr of byRow.values()) arr.sort((a,b)=>a.x-b.x);
+  const used = new Set();
+  const blocks = [];
+  for (let y = 0; y < ROWS; y++) {
+    const rowP = byRow.get(y) || [];
+    for (const p of rowP) {
+      const key = y+":"+p.x+":"+p.text.length;
+      if (used.has(key)) continue;
+      // Start a new block
+      const lines = [p.text];
+      let h = 1;
+      // Walk down subsequent rows while same x and same length differs from old
+      let ny = y + 1;
+      while (ny < ROWS) {
+        const nextRow = byRow.get(ny);
+        if (!nextRow) break;
+        const next = nextRow.find(q => q.x === p.x && q.text.length === p.text.length && !used.has(ny+":"+q.x+":"+q.text.length));
+        if (!next) break;
+        lines.push(next.text);
+        used.add(ny+":"+next.x+":"+next.text.length);
+        h++;
+        ny++;
+      }
+      // Mark head used
+      used.add(key);
+      if (h > 1) {
+        blocks.push({ y, x: p.x, lines });
+      }
+    }
+  }
+  // Filter out used patches (those included in blocks)
+  const remaining = patches.filter(p => !used.has(p.y+":"+p.x+":"+p.text.length));
+  return { blocks, remaining };
 }
 
 let broadcastDirty = false;
@@ -259,9 +300,15 @@ wss.on('connection', (ws) => {
         scheduleBroadcast();
       }
       if (data.type === 'reset') {
+        // Clear overlap text cells and ownership
+        for (const key of stars) {
+          const [sx, sy] = key.split(',').map(Number);
+          if (sx >= 0 && sx < COLS && sy >= 0 && sy < ROWS) {
+            sharedGrid[sy] = sharedGrid[sy].slice(0, sx) + EMPTY + sharedGrid[sy].slice(sx + 1);
+            cellOwners[sy][sx] = null;
+          }
+        }
         stars.clear();
-        sharedGrid = sharedGrid.map(row => row.replace(/★/g, EMPTY));
-        cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
         userRegions = new Map();
         scheduleBroadcast();
       }
