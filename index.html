@@ -22,25 +22,29 @@
       width: 100vw;
       position: relative;
     }
-    #stage {
-      font-size: 14px;
-      line-height: 1;
-      margin: 0;
-      user-select: none;
-      outline: none;
-      background: #111;
-      border: 1px solid #333;
-      min-width: 80ch;
-      min-height: 20em;
+    #stage-wrap {
+      position: relative;
       width: 100vw;
       height: calc(100vh - 48px);
+      border: 1px solid #333;
+      background: #111;
       box-sizing: border-box;
       overflow: auto;
-      z-index: 1;
     }
-    #video {
-      display: none;
+    #stage {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1;
+      white-space: pre;
+      padding: 8px;
+      box-sizing: border-box;
+      min-width: 80ch;
+      min-height: 20em;
+      color: #fff;
     }
+
+    #video { display: none; }
+
     #bottom-bar {
       position: fixed;
       left: 0;
@@ -56,7 +60,7 @@
       z-index: 10;
       border-top: 1px solid #333;
     }
-    #reset-btn, #typing-btn {
+    #reset-btn, #edit-pool-btn {
       font-size: 16px;
       padding: 4px 16px;
       background: #222;
@@ -66,15 +70,7 @@
       cursor: pointer;
       margin: 0 4px;
     }
-    #reset-btn:hover, #typing-btn:hover {
-      background: #333;
-    }
-    #mode-label {
-      color: #aaa;
-      font-size: 15px;
-      margin-right: 12px;
-      font-family: inherit;
-    }
+    #reset-btn:hover, #edit-pool-btn:hover { background: #333; }
   </style>
   <!-- MediaPipe Selfie Segmentation CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
@@ -82,11 +78,14 @@
 </head>
 <body>
   <div id="container">
-    <pre id="stage" contenteditable="false" spellcheck="false"></pre>
+    <div id="stage-wrap">
+      <pre id="stage"></pre>
+    </div>
     <div id="bottom-bar">
       <button id="reset-btn">Reset Stars</button>
       <button id="edit-pool-btn">Edit Overlap Text Pool</button>
     </div>
+
     <div id="pool-modal" style="display:none; position:fixed; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
       <div style="background:#222; color:#fff; padding:24px; border-radius:8px; min-width:320px; max-width:90vw; max-height:80vh; display:flex; flex-direction:column; align-items:center;">
         <h3 style="margin-top:0;">Edit Overlap Text Pool</h3>
@@ -99,34 +98,61 @@
       </div>
     </div>
   </div>
+
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
   <script>
-    // Thai and Cambodian (Khmer) script characters from light to dark
-    const ASCII_CHARS = [' ', 'ក', 'ខ', 'គ', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป', 'ผ', 'ฝ', 'พ', 'ฟ', 'ភ', 'ม', 'យ', 'ร', 'ฤ', 'ล', 'ฦ', 'ว', 'ศ', 'ษ', 'ส', 'ห', 'ฬ', 'อ', 'ฮ', '๐', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
+    // Mixed gradient (ASCII + Thai/Khmer) from light to dark for better luminance steps
+    const ASCII_CHARS = [
+      ' ', '.', '·', ':', '-', '=', '+', '*',
+      'ក', 'គ', 'ข', 'ญ', 'ณ', 'ฬ', 'ฮ',
+      '░', '▒', '▓', '█'
+    ];
+
     const COLS = 160;
     const ROWS = 60;
     let myId = null;
     let myOffset = { x: 0, y: 0 };
     let lastGrid = null;
-    let typingMode = false;
+    let lastColorMap = null;
+    let overlapPool = [];
+
+    const stage = document.getElementById('stage');
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
 
     function renderStage(gridArr, colorMap) {
       lastGrid = gridArr;
+      lastColorMap = colorMap;
       let html = '';
       for (let y = 0; y < gridArr.length; y++) {
-        for (let x = 0; x < gridArr[y].length; x++) {
-          const ch = gridArr[y][x];
-          const color = colorMap && colorMap[y] ? colorMap[y][x] : '';
-          if (color === 'b') {
-            html += '<span style="color:#1e3aff">' + ch + '</span>';
-          } else if (color === 'r') {
-            html += '<span style="color:#ff2222">' + ch + '</span>';
+        const row = gridArr[y];
+        const cmapRow = colorMap && colorMap[y] ? colorMap[y] : '';
+        let currColor = '#fff';
+        let segment = '';
+        function flush() {
+          if (segment.length === 0) return;
+          if (currColor === '#fff') {
+            html += escapeHtml(segment);
           } else {
-            html += '<span style="color:#fff">' + ch + '</span>';
+            html += '<span style="color:' + currColor + '">' + escapeHtml(segment) + '</span>';
           }
+          segment = '';
         }
+        for (let x = 0; x < row.length; x++) {
+          const ch = row[x];
+          const c = cmapRow ? cmapRow[x] : '';
+          const nextColor = c === 'b' ? '#1e3aff' : (c === 'r' ? '#ff2222' : '#fff');
+          if (nextColor !== currColor) {
+            flush();
+            currColor = nextColor;
+          }
+          segment += ch;
+        }
+        flush();
         html += '\n';
       }
       stage.innerHTML = html;
@@ -134,7 +160,8 @@
 
     // WebSocket setup (auto-detect protocol/host)
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
-    // Listen for pool and grid updates from server
+
+    // Pool & grid updates
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'id') {
@@ -147,8 +174,29 @@
       }
     };
 
-    // Real-time editable overlap text pool
-    let overlapPool = [];
+    // Reset button
+    document.getElementById('reset-btn').onclick = () => {
+      ws.send(JSON.stringify({ type: 'reset' }));
+    };
+
+    // Movement controls
+    document.addEventListener('keydown', (e) => {
+      let changed = false;
+      if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
+      if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
+      if (e.key === 'ArrowLeft' || e.key === 'a') { myOffset.x = Math.max(0, myOffset.x - 2); changed = true; }
+      if (e.key === 'ArrowRight' || e.key === 'd') { myOffset.x = Math.min(500 - 160, myOffset.x + 2); changed = true; }
+      if (changed) {
+        ws.send(JSON.stringify({ id: myId, offset: myOffset }));
+      }
+    });
+
+    // Region sending
+    function sendRegion(region, ox, oy) {
+      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
+    }
+
+    // Pool editor
     const editPoolBtn = document.getElementById('edit-pool-btn');
     const poolModal = document.getElementById('pool-modal');
     const poolList = document.getElementById('pool-list');
@@ -179,6 +227,7 @@
         delBtn.onclick = () => {
           overlapPool.splice(idx, 1);
           ws.send(JSON.stringify({ type: 'update_pool', pool: overlapPool }));
+          renderPool();
         };
         div.appendChild(input);
         div.appendChild(delBtn);
@@ -192,9 +241,7 @@
       poolInput.value = '';
       poolInput.focus();
     };
-    closePoolBtn.onclick = () => {
-      poolModal.style.display = 'none';
-    };
+    closePoolBtn.onclick = () => { poolModal.style.display = 'none'; };
     addPoolBtn.onclick = () => {
       const text = poolInput.value.trim();
       if (text) {
@@ -204,74 +251,32 @@
         renderPool();
       }
     };
-    poolModal.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') poolModal.style.display = 'none';
-    });
+    poolModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') poolModal.style.display = 'none'; });
 
-    // Send edits in typing mode (only user's region)
-    stage.addEventListener('input', () => {
-      if (!typingMode) return;
-      // Parse edited ASCII region and send as region update
-      const lines = stage.textContent.split('\n').slice(0, ROWS);
-      while (lines.length < ROWS) lines.push(' '.repeat(COLS));
-      const region = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
-      sendRegion(region, myOffset.x, myOffset.y);
-    });
-
-    // Reset button
-    document.getElementById('reset-btn').onclick = () => {
-      ws.send(JSON.stringify({ type: 'reset' }));
-    };
-
-    // Keyboard controls for moving offset (only in camera mode)
-    document.addEventListener('keydown', (e) => {
-      if (typingMode) return;
-      let changed = false;
-      if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
-      if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
-      if (e.key === 'ArrowLeft' || e.key === 'a') { myOffset.x = Math.max(0, myOffset.x - 2); changed = true; }
-      if (e.key === 'ArrowRight' || e.key === 'd') { myOffset.x = Math.min(500 - 160, myOffset.x + 2); changed = true; }
-      if (changed) {
-        ws.send(JSON.stringify({ id: myId, offset: myOffset }));
-      }
-    });
-
-    // Camera region update
-    function sendRegion(region, ox, oy) {
-      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
-    }
-
-    // Webcam and ASCII conversion (only in camera mode)
+    // Webcam and ASCII conversion
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const maskCanvas = document.getElementById('mask');
     const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
 
-    // MediaPipe Selfie Segmentation setup
     const selfieSegmentation = new SelfieSegmentation({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
     });
-    selfieSegmentation.setOptions({
-      modelSelection: 1
-    });
+    selfieSegmentation.setOptions({ modelSelection: 1 });
     selfieSegmentation.onResults(onSegmentationResults);
 
-    // Camera setup
     const camera = new Camera(video, {
-      onFrame: async () => {
-        await selfieSegmentation.send({ image: video });
-      },
+      onFrame: async () => { await selfieSegmentation.send({ image: video }); },
       width: 640,
       height: 480
     });
     camera.start();
 
     function onSegmentationResults(results) {
-      // Draw the mask to maskCanvas
+      // Build region from camera
       maskCtx.clearRect(0, 0, COLS, ROWS);
       maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
-      // Draw the video frame to canvas
       ctx.drawImage(video, 0, 0, COLS, ROWS);
       const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
       const maskData = maskCtx.getImageData(0, 0, COLS, ROWS).data;
@@ -280,30 +285,22 @@
         let row = '';
         for (let x = 0; x < COLS; x++) {
           const idx = (y * COLS + x) * 4;
-          // Use mask alpha to determine if this pixel is person or background
           const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
           if (isPerson) {
             const r = imgData[idx];
             const g = imgData[idx + 1];
             const b = imgData[idx + 2];
-            // Luminance
             const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
             row += ASCII_CHARS[charIdx];
           } else {
-            row += '.';
+            row += ' ';
           }
         }
         asciiGrid.push(row);
       }
-      // Always send region update, even in Typing Mode
       sendRegion(asciiGrid, myOffset.x, myOffset.y);
     }
-
-    // On connect, request pool (handled by server on connect)
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'request_pool' }));
-    };
   </script>
 </body>
 </html>
