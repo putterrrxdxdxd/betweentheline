@@ -29,6 +29,35 @@ let cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 // Track each user's last region (offset and size)
 let userRegions = new Map();
 
+// Overlap text pool: words and short phrases from Thai and Khmer passages
+let overlapPassages = [
+  `ประเทศไทยรวมเลือดเนื้อชาติเชื้อไทย เป็นประชารัฐ ไผทของไทยทุกส่วน อยู่ดำรงคงไว้ได้ทั้งมวล ด้วยไทยล้วนหมาย รักสามัคคี ไทยนี้รักสงบ แต่ถึงรบไม่ขลาด เอกราชจะไม่ให้ใครข่มขี่ สละเลือดทุกหยาดเป็นชาติพลี เถลิงประเทศชาติไทยทวีมีชัย ชโย`,
+  `សូមពួកទេព្តា រក្សាមហាក្សត្រយើង ឱ្យបានរុងរឿង ដោយជ័យមង្គលសិរីសួស្តី យើងខ្ញុំព្រះអង្គ សូមជ្រកក្រោមម្លប់ព្រះបារមី នៃព្រះនរបតីវង្ស ក្សត្រាដែលសាងប្រាសាទថ្ម គ្រប់គ្រងដែនខ្មែរ បុរាណថ្កើងថ្កាន ។`,
+  `ប្រាសាទសិលា កំបាំងកណ្តាលព្រៃ គួរឱ្យស្រមៃ នឹកដល់យសស័ក្តិមហានគរ ជាតិខ្មែរដូចថ្ម គង់វង្សនៅល្អរឹងប៉ឹងជំហរ យើងសង្ឃឹមពរ ភ័ព្វព្រេងសំណាងរបស់កម្ពុជា មហារដ្ឋកើតមាន យូរអង្វែងហើយ ។ គ្រប់វត្តអារាម ឮតែសូរស័ព្ទធម៌ សូត្រដោយអំណរ រំឭកគុណពុទ្ធសាសនា ចូរយើងជាអ្នក ជឿជាក់ស្មោះស្ម័គ្រតាមបែបដូនតា គង់តែទេវតា នឹងជួយជ្រោមជ្រែងផ្គត់ផ្គង់ប្រយោជន៍ឱ្យ ដល់ប្រទេសខ្មែរ ជាមហានគរ ។`
+];
+function getOverlapWords() {
+  // Split passages into words and short phrases (2-4 words)
+  const words = [];
+  for (const passage of overlapPassages) {
+    const tokens = passage.split(/\s+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i++) {
+      words.push(tokens[i]);
+      if (i + 1 < tokens.length) words.push(tokens[i] + ' ' + tokens[i + 1]);
+      if (i + 2 < tokens.length) words.push(tokens[i] + ' ' + tokens[i + 1] + ' ' + tokens[i + 2]);
+      if (i + 3 < tokens.length) words.push(tokens[i] + ' ' + tokens[i + 1] + ' ' + tokens[i + 2] + ' ' + tokens[i + 3]);
+    }
+  }
+  return words;
+}
+let overlapWords = getOverlapWords();
+let overlapPool = [
+  'ประเทศไทย', 'รวมเลือดเนื้อ', 'ชาติเชื้อไทย', 'เป็นประชารัฐ', 'សូមពួកទេព្តា', 'រក្សាមហាក្សត្រយើង', 'ប្រាសាទសិលា', 'កំបាំងកណ្តាលព្រៃ', 'ជាតិខ្មែរដូចថ្ម', 'គង់វង្សនៅល្អ', 'ជឿជាក់ស្មោះស្ម័គ្រតាមបែបដូនតា'
+];
+function randomOverlapText() {
+  if (overlapPool.length === 0) return '★';
+  return overlapPool[Math.floor(Math.random() * overlapPool.length)];
+}
+
 function gridKey(x, y) {
   return `${x},${y}`;
 }
@@ -82,10 +111,15 @@ function updateGridRegion(grid, region, ox, oy, userId) {
         if (
           prev !== EMPTY && next !== EMPTY && prev !== next && prevOwner && prevOwner !== userId
         ) {
-          newStars.add(gridKey(gx, gy));
+          // Insert random overlap text horizontally
+          const overlapText = randomOverlapText();
+          for (let k = 0; k < overlapText.length && gx + k < COLS; k++) {
+            newGrid[gy][gx + k] = overlapText[k];
+            stars.add(gridKey(gx + k, gy));
+          }
         }
         if (next !== EMPTY) {
-          newGrid[gy][gx] = newStars.has(gridKey(gx, gy)) ? STAR : next;
+          newGrid[gy][gx] = newStars.has(gridKey(gx, gy)) ? newGrid[gy][gx] : next;
           cellOwners[gy][gx] = userId;
         }
       }
@@ -96,8 +130,29 @@ function updateGridRegion(grid, region, ox, oy, userId) {
   return [newGrid.map(row => row.join('')), newStars];
 }
 
+function getColorMap() {
+  // Build a color map: 'r' for camera, 'b' for overlap, '' for normal
+  let colorMap = Array.from({ length: ROWS }, () => Array(COLS).fill(''));
+  // Mark overlap cells
+  for (const key of stars) {
+    const [x, y] = key.split(',').map(Number);
+    if (x >= 0 && x < COLS && y >= 0 && y < ROWS) {
+      colorMap[y][x] = 'b';
+    }
+  }
+  // Mark camera regions (by cellOwners)
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (cellOwners[y][x] && colorMap[y][x] !== 'b') {
+        colorMap[y][x] = 'r';
+      }
+    }
+  }
+  return colorMap.map(row => row.join(''));
+}
+
 function broadcastGrid() {
-  const payload = JSON.stringify({ type: 'grid', grid: sharedGrid });
+  const payload = JSON.stringify({ type: 'grid', grid: sharedGrid, colorMap: getColorMap() });
   for (const ws of wss.clients) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(payload);
@@ -108,12 +163,25 @@ function broadcastGrid() {
 wss.on('connection', (ws) => {
   const id = uuidv4();
   ws.send(JSON.stringify({ type: 'id', id }));
-  // Send current grid
   ws.send(JSON.stringify({ type: 'grid', grid: sharedGrid }));
+  ws.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
 
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
+      if (data.type === 'update_pool' && Array.isArray(data.pool)) {
+        overlapPool = data.pool.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim());
+        // Broadcast to all
+        for (const client of wss.clients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
+          }
+        }
+      }
+      if (data.type === 'add_article' && typeof data.text === 'string' && data.text.trim()) {
+        overlapPassages.push(data.text.trim());
+        overlapWords = getOverlapWords();
+      }
       if (data.type === 'edit' && Array.isArray(data.grid)) {
         // Full grid edit (typing mode)
         let newStars = new Set(stars);

@@ -84,17 +84,27 @@
   <div id="container">
     <pre id="stage" contenteditable="false" spellcheck="false"></pre>
     <div id="bottom-bar">
-      <span id="mode-label">Mode: Camera</span>
-      <button id="typing-btn">Switch to Typing</button>
       <button id="reset-btn">Reset Stars</button>
+      <button id="edit-pool-btn">Edit Overlap Text Pool</button>
+    </div>
+    <div id="pool-modal" style="display:none; position:fixed; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
+      <div style="background:#222; color:#fff; padding:24px; border-radius:8px; min-width:320px; max-width:90vw; max-height:80vh; display:flex; flex-direction:column; align-items:center;">
+        <h3 style="margin-top:0;">Edit Overlap Text Pool</h3>
+        <div id="pool-list" style="width:100%; max-width:500px; margin-bottom:12px; max-height:40vh; overflow:auto;"></div>
+        <textarea id="pool-input" rows="2" style="width:100%; max-width:500px; font-size:16px; font-family:inherit; margin-bottom:12px;" placeholder="Add new word or phrase..."></textarea>
+        <div style="display:flex; gap:12px;">
+          <button id="add-pool-btn">Add</button>
+          <button id="close-pool-btn">Close</button>
+        </div>
+      </div>
     </div>
   </div>
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
   <script>
-    // ASCII characters from dark to light
-    const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
+    // Thai and Cambodian (Khmer) script characters from light to dark
+    const ASCII_CHARS = [' ', 'ក', 'ខ', 'គ', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป', 'ผ', 'ฝ', 'พ', 'ฟ', 'ភ', 'ม', 'យ', 'ร', 'ฤ', 'ล', 'ฦ', 'ว', 'ศ', 'ษ', 'ส', 'ห', 'ฬ', 'อ', 'ฮ', '๐', '១', '២', '៣', '៤', '៥', '៦', '៧', '៨', '៩'];
     const COLS = 160;
     const ROWS = 60;
     let myId = null;
@@ -102,45 +112,110 @@
     let lastGrid = null;
     let typingMode = false;
 
-    function renderStage(gridArr) {
+    function renderStage(gridArr, colorMap) {
       lastGrid = gridArr;
-      document.getElementById('stage').textContent = gridArr.join('\n');
+      let html = '';
+      for (let y = 0; y < gridArr.length; y++) {
+        for (let x = 0; x < gridArr[y].length; x++) {
+          const ch = gridArr[y][x];
+          const color = colorMap && colorMap[y] ? colorMap[y][x] : '';
+          if (color === 'b') {
+            html += '<span style="color:#1e3aff">' + ch + '</span>';
+          } else if (color === 'r') {
+            html += '<span style="color:#ff2222">' + ch + '</span>';
+          } else {
+            html += '<span style="color:#fff">' + ch + '</span>';
+          }
+        }
+        html += '\n';
+      }
+      stage.innerHTML = html;
     }
 
     // WebSocket setup (auto-detect protocol/host)
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+    // Listen for pool and grid updates from server
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'id') {
         myId = data.id;
       } else if (data.type === 'grid') {
-        renderStage(data.grid);
+        renderStage(data.grid, data.colorMap);
+      } else if (data.type === 'pool') {
+        overlapPool = data.pool;
+        if (poolModal.style.display === 'flex') renderPool();
       }
     };
 
-    // Typing/Camera mode toggle (per user)
-    const typingBtn = document.getElementById('typing-btn');
-    const modeLabel = document.getElementById('mode-label');
-    const stage = document.getElementById('stage');
-    typingBtn.onclick = () => {
-      typingMode = !typingMode;
-      stage.contentEditable = typingMode ? 'true' : 'false';
-      typingBtn.textContent = typingMode ? 'Switch to Camera' : 'Switch to Typing';
-      modeLabel.textContent = typingMode ? 'Mode: Typing' : 'Mode: Camera';
-      if (!typingMode && lastGrid) {
-        // Restore grid from server when leaving typing mode
-        renderStage(lastGrid);
+    // Real-time editable overlap text pool
+    let overlapPool = [];
+    const editPoolBtn = document.getElementById('edit-pool-btn');
+    const poolModal = document.getElementById('pool-modal');
+    const poolList = document.getElementById('pool-list');
+    const poolInput = document.getElementById('pool-input');
+    const addPoolBtn = document.getElementById('add-pool-btn');
+    const closePoolBtn = document.getElementById('close-pool-btn');
+
+    function renderPool() {
+      poolList.innerHTML = '';
+      overlapPool.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.marginBottom = '4px';
+        const input = document.createElement('input');
+        input.value = item;
+        input.style.flex = '1';
+        input.style.fontSize = '15px';
+        input.style.fontFamily = 'inherit';
+        input.style.marginRight = '8px';
+        input.onchange = () => {
+          overlapPool[idx] = input.value;
+          ws.send(JSON.stringify({ type: 'update_pool', pool: overlapPool }));
+        };
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Delete';
+        delBtn.style.fontSize = '13px';
+        delBtn.onclick = () => {
+          overlapPool.splice(idx, 1);
+          ws.send(JSON.stringify({ type: 'update_pool', pool: overlapPool }));
+        };
+        div.appendChild(input);
+        div.appendChild(delBtn);
+        poolList.appendChild(div);
+      });
+    }
+
+    editPoolBtn.onclick = () => {
+      poolModal.style.display = 'flex';
+      renderPool();
+      poolInput.value = '';
+      poolInput.focus();
+    };
+    closePoolBtn.onclick = () => {
+      poolModal.style.display = 'none';
+    };
+    addPoolBtn.onclick = () => {
+      const text = poolInput.value.trim();
+      if (text) {
+        overlapPool.push(text);
+        ws.send(JSON.stringify({ type: 'update_pool', pool: overlapPool }));
+        poolInput.value = '';
+        renderPool();
       }
     };
+    poolModal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') poolModal.style.display = 'none';
+    });
 
-    // Send edits in typing mode
+    // Send edits in typing mode (only user's region)
     stage.addEventListener('input', () => {
       if (!typingMode) return;
-      // Parse edited ASCII grid and send as collaborative edit
+      // Parse edited ASCII region and send as region update
       const lines = stage.textContent.split('\n').slice(0, ROWS);
       while (lines.length < ROWS) lines.push(' '.repeat(COLS));
-      const grid = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
-      ws.send(JSON.stringify({ type: 'edit', grid }));
+      const region = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
+      sendRegion(region, myOffset.x, myOffset.y);
     });
 
     // Reset button
@@ -185,7 +260,7 @@
     // Camera setup
     const camera = new Camera(video, {
       onFrame: async () => {
-        if (!typingMode) await selfieSegmentation.send({ image: video });
+        await selfieSegmentation.send({ image: video });
       },
       width: 640,
       height: 480
@@ -193,7 +268,6 @@
     camera.start();
 
     function onSegmentationResults(results) {
-      if (typingMode) return;
       // Draw the mask to maskCanvas
       maskCtx.clearRect(0, 0, COLS, ROWS);
       maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
@@ -222,9 +296,14 @@
         }
         asciiGrid.push(row);
       }
-      // In camera mode, send region update
+      // Always send region update, even in Typing Mode
       sendRegion(asciiGrid, myOffset.x, myOffset.y);
     }
+
+    // On connect, request pool (handled by server on connect)
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'request_pool' }));
+    };
   </script>
 </body>
 </html>
