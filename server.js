@@ -17,8 +17,8 @@ const server = app.listen(PORT, () => {
   console.log(`HTTP/WS server running on http://localhost:${PORT}`);
 });
 
-// WebSocket server on the same port
-const wss = new WebSocket.Server({ server });
+// WebSocket server on the same port (enable compression)
+const wss = new WebSocket.Server({ server, perMessageDeflate: true });
 
 // Shared collaborative grid
 let sharedGrid = Array.from({ length: ROWS }, () => EMPTY.repeat(COLS));
@@ -151,19 +151,70 @@ function getColorMap() {
   return colorMap.map(row => row.join(''));
 }
 
-function broadcastGrid() {
-  const payload = JSON.stringify({ type: 'grid', grid: sharedGrid, colorMap: getColorMap() });
+function broadcastGridNow() {
+  const newColorMap = getColorMap();
+  if (!global.lastBroadcastGrid || !global.lastBroadcastColorMap) {
+    // First time: send full
+    const payload = JSON.stringify({ type: 'grid', grid: sharedGrid, colorMap: newColorMap });
+    for (const ws of wss.clients) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(payload);
+      }
+    }
+    global.lastBroadcastGrid = sharedGrid.map(r => r);
+    global.lastBroadcastColorMap = newColorMap.map(r => r);
+    return;
+  }
+  const gridPatches = computePatches(global.lastBroadcastGrid, sharedGrid);
+  const colorPatches = computePatches(global.lastBroadcastColorMap, newColorMap);
+  if (gridPatches.length === 0 && colorPatches.length === 0) return;
+  const payload = JSON.stringify({ type: 'patch', gridPatches, colorPatches });
   for (const ws of wss.clients) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(payload);
     }
   }
+  global.lastBroadcastGrid = sharedGrid.map(r => r);
+  global.lastBroadcastColorMap = newColorMap.map(r => r);
 }
+
+function computePatches(oldArr, newArr) {
+  const patches = [];
+  for (let y = 0; y < ROWS; y++) {
+    const oldRow = oldArr[y] || '';
+    const newRow = newArr[y] || '';
+    if (oldRow === newRow) continue;
+    let x = 0;
+    while (x < COLS) {
+      if (oldRow[x] !== newRow[x]) {
+        let start = x;
+        let seg = '';
+        while (x < COLS && oldRow[x] !== newRow[x]) {
+          seg += newRow[x];
+          x++;
+        }
+        patches.push({ y, x: start, text: seg });
+      } else {
+        x++;
+      }
+    }
+  }
+  return patches;
+}
+
+let broadcastDirty = false;
+function scheduleBroadcast() { broadcastDirty = true; }
+setInterval(() => {
+  if (broadcastDirty) {
+    broadcastDirty = false;
+    broadcastGridNow();
+  }
+}, 1000 / 10); // 10 FPS max
 
 wss.on('connection', (ws) => {
   const id = uuidv4();
   ws.send(JSON.stringify({ type: 'id', id }));
-  ws.send(JSON.stringify({ type: 'grid', grid: sharedGrid }));
+  ws.send(JSON.stringify({ type: 'grid', grid: sharedGrid, colorMap: getColorMap() }));
   ws.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
 
   ws.on('message', (msg) => {
@@ -171,7 +222,6 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(msg);
       if (data.type === 'update_pool' && Array.isArray(data.pool)) {
         overlapPool = data.pool.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim());
-        // Broadcast to all
         for (const client of wss.clients) {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
@@ -183,7 +233,7 @@ wss.on('connection', (ws) => {
         overlapWords = getOverlapWords();
       }
       if (data.type === 'edit' && Array.isArray(data.grid)) {
-        // Full grid edit (typing mode)
+        // Full grid edit (typing mode) - retained for compatibility
         let newStars = new Set(stars);
         for (let y = 0; y < ROWS; y++) {
           for (let x = 0; x < COLS; x++) {
@@ -199,22 +249,21 @@ wss.on('connection', (ws) => {
           }
         }
         sharedGrid = data.grid.map((row, y) =>
-          row.split('').map((ch, x) => newStars.has(gridKey(x, y)) ? STAR : ch).join('')
+          row.split('').map((ch, x) => newStars.has(gridKey(x, y)) ? ch : ch).join('')
         );
         stars = newStars;
-        broadcastGrid();
+        scheduleBroadcast();
       }
       if (data.type === 'region' && Array.isArray(data.region) && typeof data.ox === 'number' && typeof data.oy === 'number') {
-        // Region update (camera mode)
         [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy, id);
-        broadcastGrid();
+        scheduleBroadcast();
       }
       if (data.type === 'reset') {
         stars.clear();
         sharedGrid = sharedGrid.map(row => row.replace(/★/g, EMPTY));
         cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
         userRegions = new Map();
-        broadcastGrid();
+        scheduleBroadcast();
       }
     } catch (e) {}
   });
