@@ -111,12 +111,15 @@
     // Camera viewport/grid size
     const COLS = 500;
     const ROWS = 200;
+    // Fixed camera region size
+    const CAMERA_COLS = 80;
+    const CAMERA_ROWS = 32;
     let myOffset = { x: 0, y: 0 };
+    let prevOffset = { x: 0, y: 0 };
+    let prevMask = null;
     let viewOffset = { x: 0, y: 0 };
     let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
     let lastGrid = null;
-    let prevOffset = { x: 0, y: 0 };
-    let prevMask = null;
     // Remove Typing Mode button and related logic
     // Remove typingBtn, contentEditable, and input event
     // Remove typingMode variable
@@ -342,14 +345,14 @@
       joyInterval = setInterval(() => {
         if (joyMove.x !== 0 || joyMove.y !== 0) {
           let newOffset = { ...myOffset };
-          newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, myOffset.x + Math.round(joyMove.x * 2)));
-          newOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, myOffset.y + Math.round(joyMove.y * 2)));
+          newOffset.x = Math.max(0, Math.min(COLS - CAMERA_COLS, myOffset.x + Math.round(joyMove.x * 2)));
+          newOffset.y = Math.max(0, Math.min(ROWS - CAMERA_ROWS, myOffset.y + Math.round(joyMove.y * 2)));
           if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
             // Erase previous body pixels
             let eraseDiffs = [];
             if (prevMask) {
-              for (let y = 0; y < VIEW_ROWS; y++) {
-                for (let x = 0; x < VIEW_COLS; x++) {
+              for (let y = 0; y < CAMERA_ROWS; y++) {
+                for (let x = 0; x < CAMERA_COLS; x++) {
                   if (prevMask[y] && prevMask[y][x]) {
                     const gx = myOffset.x + x;
                     const gy = myOffset.y + y;
@@ -511,18 +514,18 @@
 
     // Update onSegmentationResults to use sendDiffs
     function onSegmentationResults(results) {
-      maskCtx.clearRect(0, 0, VIEW_COLS, VIEW_ROWS);
-      maskCtx.drawImage(results.segmentationMask, 0, 0, VIEW_COLS, VIEW_ROWS);
-      ctx.drawImage(video, 0, 0, VIEW_COLS, VIEW_ROWS);
-      const imgData = ctx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
-      const maskData = maskCtx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
+      maskCtx.clearRect(0, 0, CAMERA_COLS, CAMERA_ROWS);
+      maskCtx.drawImage(results.segmentationMask, 0, 0, CAMERA_COLS, CAMERA_ROWS);
+      ctx.drawImage(video, 0, 0, CAMERA_COLS, CAMERA_ROWS);
+      const imgData = ctx.getImageData(0, 0, CAMERA_COLS, CAMERA_ROWS).data;
+      const maskData = maskCtx.getImageData(0, 0, CAMERA_COLS, CAMERA_ROWS).data;
       let diffs = [];
       let newMask = [];
       let bodyPixelCount = 0;
-      for (let y = 0; y < VIEW_ROWS; y++) {
+      for (let y = 0; y < CAMERA_ROWS; y++) {
         newMask[y] = [];
-        for (let x = 0; x < VIEW_COLS; x++) {
-          const idx = (y * VIEW_COLS + x) * 4;
+        for (let x = 0; x < CAMERA_COLS; x++) {
+          const idx = (y * CAMERA_COLS + x) * 4;
           const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
           if (isPerson) bodyPixelCount++;
           newMask[y][x] = isPerson ? 1 : 0;
