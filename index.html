@@ -102,12 +102,13 @@
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
   <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
+  <div id="minimap" style="position:fixed;right:16px;top:16px;z-index:1002;width:120px;height:48px;background:#222b;border:1px solid #444;display:none;">
+    <canvas id="minimap-canvas" width="120" height="48" style="width:120px;height:48px;"></canvas>
+  </div>
   <script>
     // ASCII characters from dark to light
     const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
     // Camera viewport/grid size
-    const VIEW_COLS = 80;
-    const VIEW_ROWS = 32;
     const COLS = 500;
     const ROWS = 200;
     let myOffset = { x: 0, y: 0 };
@@ -130,23 +131,73 @@
     // Remove typingBtn.onclick, stage.addEventListener('input'), and typingMode checks
     // ... existing code ...
     // Only keep camera mode, pool UI, and segmentation logic
+    // Responsive viewport sizing for mobile
+    let VIEW_COLS = 80, VIEW_ROWS = 32;
+    function isMobile() {
+      return window.innerWidth < 900;
+    }
+    function updateViewportSize() {
+      if (!isMobile()) {
+        VIEW_COLS = COLS;
+        VIEW_ROWS = ROWS;
+        viewOffset = { x: 0, y: 0 };
+        document.getElementById('dpad').style.display = 'none';
+        document.getElementById('joystick').style.display = 'none';
+        document.getElementById('minimap').style.display = 'none';
+      } else {
+        // Estimate font metrics
+        const pre = document.getElementById('stage');
+        pre.style.fontSize = '14px';
+        pre.style.lineHeight = '1';
+        const testSpan = document.createElement('span');
+        testSpan.textContent = 'A';
+        pre.appendChild(testSpan);
+        const charWidth = testSpan.offsetWidth;
+        const charHeight = testSpan.offsetHeight;
+        pre.removeChild(testSpan);
+        // Calculate available space
+        const pad = 32 + 120; // UI padding + joystick/minimap
+        const availW = window.innerWidth - pad;
+        const availH = window.innerHeight - 180; // leave space for dpad
+        VIEW_COLS = Math.max(10, Math.min(COLS, Math.floor(availW / charWidth)));
+        VIEW_ROWS = Math.max(5, Math.min(ROWS, Math.floor(availH / charHeight)));
+        // Clamp viewOffset
+        viewOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, viewOffset.x));
+        viewOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, viewOffset.y));
+        document.getElementById('dpad').style.display = 'flex';
+        document.getElementById('joystick').style.display = 'flex';
+        document.getElementById('minimap').style.display = 'block';
+      }
+      renderStage();
+      renderMinimap();
+    }
+    window.addEventListener('resize', updateViewportSize);
+    window.addEventListener('orientationchange', updateViewportSize);
+    document.addEventListener('DOMContentLoaded', updateViewportSize);
+
     function renderStage() {
       const lines = [];
-      for (let y = 0; y < VIEW_ROWS; y++) {
-        let row = '';
-        for (let x = 0; x < VIEW_COLS; x++) {
-          const gx = viewOffset.x + x;
-          const gy = viewOffset.y + y;
-          if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS) {
-            row += cachedGrid[gy][gx];
-          } else {
-            row += ' ';
-          }
+      if (!isMobile()) {
+        for (let y = 0; y < ROWS; y++) {
+          lines.push(cachedGrid[y].join(''));
         }
-        lines.push(row);
+      } else {
+        for (let y = 0; y < VIEW_ROWS; y++) {
+          let row = '';
+          for (let x = 0; x < VIEW_COLS; x++) {
+            const gx = viewOffset.x + x;
+            const gy = viewOffset.y + y;
+            if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS) {
+              row += cachedGrid[gy][gx];
+            } else {
+              row += ' ';
+            }
+          }
+          lines.push(row);
+        }
       }
       document.getElementById('stage').textContent = lines.join('\n');
-      console.log('[DEBUG] renderStage called. First line:', lines[0]);
+      //console.log('[DEBUG] renderStage called. First line:', lines[0]);
     }
 
     function sendRegion(region, ox, oy) {
@@ -244,6 +295,7 @@
       if (newOffset.x !== viewOffset.x || newOffset.y !== viewOffset.y) {
         viewOffset = newOffset;
         renderStage();
+        renderMinimap();
       }
     }
     // D-pad hold-to-move logic
@@ -315,6 +367,7 @@
             prevOffset = { ...myOffset };
             myOffset = newOffset;
             renderStage();
+            renderMinimap();
           }
         }
       }, 60);
@@ -539,6 +592,24 @@
     };
     // Unhide video for debugging on mobile
     document.getElementById('video').style.display = 'none';
+
+    function renderMinimap() {
+      const mm = document.getElementById('minimap');
+      const c = document.getElementById('minimap-canvas');
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      // Draw grid outline
+      ctx.strokeStyle = '#888';
+      ctx.strokeRect(0, 0, c.width, c.height);
+      // Draw viewport rectangle
+      if (isMobile()) {
+        const scaleX = c.width / COLS;
+        const scaleY = c.height / ROWS;
+        ctx.strokeStyle = '#0f0';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(viewOffset.x * scaleX, viewOffset.y * scaleY, VIEW_COLS * scaleX, VIEW_ROWS * scaleY);
+      }
+    }
   </script>
 </body>
 </html>
