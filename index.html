@@ -108,6 +108,14 @@
   <script>
     // ASCII characters from dark to light
     const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
+    const THAI_CHARS = [' ', 'ก', 'ข', 'ค', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป', 'ผ', 'ฝ', 'พ', 'ฟ', 'ภ', 'ม', 'ย', 'ร', 'ฤ', 'ล', 'ฦ', 'ว', 'ศ', 'ษ', 'ส', 'ห', 'ฬ', 'อ', 'ฮ'];
+    const KHMER_CHARS = [' ', 'ក', 'ខ', 'គ', 'ឃ', 'ង', 'ច', 'ឆ', 'ជ', 'ឈ', 'ញ', 'ដ', 'ឋ', 'ឌ', 'ឍ', 'ណ', 'ត', 'ថ', 'ទ', 'ធ', 'ន', 'ប', 'ផ', 'ព', 'ភ', 'ម', 'យ', 'រ', 'ល', 'វ', 'ស', 'ហ', 'ឡ', 'អ'];
+    let BODY_CHARS = ASCII_CHARS;
+    function pickBodyCharset() {
+      const sets = [ASCII_CHARS, THAI_CHARS, KHMER_CHARS];
+      BODY_CHARS = sets[Math.floor(Math.random() * sets.length)];
+    }
+    pickBodyCharset();
     // Camera viewport/grid size
     const COLS = 500;
     const ROWS = 200;
@@ -283,7 +291,7 @@
       }
     });
 
-    // D-pad movement for mobile
+    // D-pad always pans the view (viewOffset)
     function dpadMove(dx, dy) {
       let newOffset = { ...viewOffset };
       newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, viewOffset.x + dx));
@@ -528,8 +536,8 @@
             const g = imgData[idx + 1];
             const b = imgData[idx + 2];
             const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
-            char = ASCII_CHARS[charIdx];
+            const charIdx = Math.floor((lum / 255) * (BODY_CHARS.length - 1));
+            char = BODY_CHARS[charIdx];
           }
           const gx = myOffset.x + x;
           const gy = myOffset.y + y;

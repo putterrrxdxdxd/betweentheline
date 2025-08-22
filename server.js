@@ -42,8 +42,9 @@ function randomOverlapText() {
 
 function writeOverlapText(grid, x, y) {
   const text = randomOverlapText();
-  for (let i = 0; i < text.length && x + i < COLS; i++) {
-    grid[y][x + i] = text[i];
+  const codePoints = Array.from(text);
+  for (let i = 0; i < codePoints.length && x + i < COLS; i++) {
+    grid[y][x + i] = codePoints[i];
     lockedCells.add(gridKey(x + i, y));
   }
 }
@@ -157,7 +158,7 @@ wss.on('connection', (ws) => {
         for (const { x, y, char } of diffs) {
           if (
             x >= 0 && x < COLS && y >= 0 && y < ROWS &&
-            typeof char === 'string' && char.length === 1 && !lockedCells.has(gridKey(x, y))
+            typeof char === 'string' && char.length >= 1 && !lockedCells.has(gridKey(x, y))
           ) {
             if (char !== EMPTY) {
               // Overlap logic for body pixels only
@@ -165,12 +166,13 @@ wss.on('connection', (ws) => {
                 sharedGrid[y][x] !== EMPTY && sharedGrid[y][x] !== char &&
                 cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(gridKey(x, y))
               ) {
-                writeOverlapText(sharedGrid, x, y);
+                // Write overlap text (Unicode-aware)
                 const text = randomOverlapText();
-                for (let i = 0; i < text.length && x + i < COLS; i++) {
-                  sharedGrid[y][x + i] = text[i];
+                const codePoints = Array.from(text);
+                for (let i = 0; i < codePoints.length && x + i < COLS; i++) {
+                  sharedGrid[y][x + i] = codePoints[i];
                   lockedCells.add(gridKey(x + i, y));
-                  diffsToSend.push({ x: x + i, y, char: text[i] });
+                  diffsToSend.push({ x: x + i, y, char: codePoints[i] });
                 }
                 continue;
               }
