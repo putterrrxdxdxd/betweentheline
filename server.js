@@ -121,36 +121,40 @@ function broadcastGrid() {
   }
 }
 
+function unpackDiffs(buffer) {
+  const count = buffer.readUInt16LE(0);
+  const diffs = [];
+  for (let i = 0; i < count; i++) {
+    const x = buffer.readUInt16LE(2 + i * 5);
+    const y = buffer.readUInt16LE(4 + i * 5);
+    const char = String.fromCharCode(buffer.readUInt8(6 + i * 5));
+    diffs.push({ x, y, char });
+  }
+  return diffs;
+}
+function packDiffs(diffs) {
+  const buffer = Buffer.alloc(2 + diffs.length * 5);
+  buffer.writeUInt16LE(diffs.length, 0);
+  for (let i = 0; i < diffs.length; i++) {
+    buffer.writeUInt16LE(diffs[i].x, 2 + i * 5);
+    buffer.writeUInt16LE(diffs[i].y, 4 + i * 5);
+    buffer.writeUInt8(diffs[i].char.charCodeAt(0), 6 + i * 5);
+  }
+  return buffer;
+}
+
 wss.on('connection', (ws) => {
   const id = uuidv4();
   ws.send(JSON.stringify({ type: 'id', id }));
-  // Send full grid snapshot as array of strings for compatibility
   ws.send(JSON.stringify({ type: 'grid', grid: sharedGrid.map(row => row.join('')) }));
   ws.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
-
-  ws.on('message', (msg) => {
+  ws.on('message', (msg, isBinary) => {
     try {
-      const data = JSON.parse(msg);
-      if (data.type === 'add_pool_text' && typeof data.text === 'string' && data.text.trim()) {
-        overlapPool.push(data.text.trim());
-        for (const client of wss.clients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
-          }
-        }
-      }
-      if (data.type === 'delete_pool_text' && typeof data.text === 'string') {
-        overlapPool = overlapPool.filter(t => t !== data.text);
-        for (const client of wss.clients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
-          }
-        }
-      }
-      // Diff-based update
-      if (data.type === 'diff' && Array.isArray(data.diffs)) {
+      if (isBinary) {
+        // Binary diff message
+        const diffs = unpackDiffs(msg);
         let diffsToSend = [];
-        for (const { x, y, char } of data.diffs) {
+        for (const { x, y, char } of diffs) {
           if (
             x >= 0 && x < COLS && y >= 0 && y < ROWS &&
             typeof char === 'string' && char.length === 1 && !lockedCells.has(gridKey(x, y))
@@ -161,65 +165,64 @@ wss.on('connection', (ws) => {
               cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(gridKey(x, y))
             ) {
               writeOverlapText(sharedGrid, x, y);
-              // Add all written chars as diffs
               const text = randomOverlapText();
               for (let i = 0; i < text.length && x + i < COLS; i++) {
                 sharedGrid[y][x + i] = text[i];
                 lockedCells.add(gridKey(x + i, y));
                 diffsToSend.push({ x: x + i, y, char: text[i] });
               }
-              continue; // skip normal update for this cell
+              continue;
             }
             sharedGrid[y][x] = char;
             cellOwners[y][x] = id;
             diffsToSend.push({ x, y, char });
           }
         }
-        // Broadcast only the diffs
         if (diffsToSend.length > 0) {
+          const outBuf = packDiffs(diffsToSend);
           for (const client of wss.clients) {
             if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({ type: 'diff', diffs: diffsToSend }));
+              client.send(outBuf, { binary: true });
             }
           }
         }
-      }
-      if (data.type === 'edit' && Array.isArray(data.grid)) {
-        for (let y = 0; y < ROWS; y++) {
-          for (let x = 0; x < COLS; x++) {
-            const key = gridKey(x, y);
-            if (
-              sharedGrid[y][x] !== EMPTY && data.grid[y][x] !== EMPTY && sharedGrid[y][x] !== data.grid[y][x] &&
-              cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(key)
-            ) {
-              writeOverlapText(sharedGrid, x, y);
-            }
-            if (data.grid[y][x] !== EMPTY && !lockedCells.has(key)) {
-              cellOwners[y][x] = id;
-              sharedGrid[y][x] = data.grid[y][x];
+      } else {
+        // JSON message
+        const data = JSON.parse(msg);
+        if (data.type === 'add_pool_text' && typeof data.text === 'string' && data.text.trim()) {
+          overlapPool.push(data.text.trim());
+          for (const client of wss.clients) {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
             }
           }
         }
-        // Send full grid snapshot after edit
-        broadcastGrid();
-      }
-      if (data.type === 'region' && Array.isArray(data.region) && typeof data.ox === 'number' && typeof data.oy === 'number') {
-        [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy, id);
-        broadcastGrid();
-      }
-      if (data.type === 'reset') {
-        stars.clear();
-        sharedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
-        cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
-        userRegions = new Map();
-        lockedCells.clear();
-        for (const client of wss.clients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
+        if (data.type === 'delete_pool_text' && typeof data.text === 'string') {
+          overlapPool = overlapPool.filter(t => t !== data.text);
+          for (const client of wss.clients) {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
+            }
           }
         }
-        broadcastGrid();
+        if (data.type === 'region' && Array.isArray(data.region) && typeof data.ox === 'number' && typeof data.oy === 'number') {
+          [sharedGrid, stars] = updateGridRegion(sharedGrid, data.region, data.ox, data.oy, id);
+          broadcastGrid();
+        }
+        if (data.type === 'reset') {
+          stars.clear();
+          sharedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+          cellOwners = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+          userRegions = new Map();
+          lockedCells.clear();
+          for (const client of wss.clients) {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: 'pool', pool: overlapPool }));
+            }
+          }
+          broadcastGrid();
+        }
       }
-    } catch (e) {}
+    } catch (e) { console.error(e); }
   });
 });

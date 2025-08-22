@@ -54,6 +54,9 @@
     <button id="typing-btn">Typing Mode</button>
     <button id="reset-btn">Reset Stars</button>
   </div>
+  <div style="position:fixed;top:8px;right:16px;z-index:1000;color:#0f0;font-size:14px;background:#111;padding:4px 12px;border-radius:6px;opacity:0.95;" id="bw-monitor">
+    Sent: <span id="bw-sent">0</span> bytes | Recv: <span id="bw-recv">0</span> bytes
+  </div>
   <div id="poolBox">
     <ul id="poolList"></ul>
     <div id="poolControls">
@@ -68,11 +71,15 @@
   <script>
     // ASCII characters from dark to light
     const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
-    const COLS = 160;
-    const ROWS = 60;
-    let myId = null;
+    // Camera viewport/grid size
+    const VIEW_COLS = 80;
+    const VIEW_ROWS = 32;
+    const COLS = 500;
+    const ROWS = 200;
     let myOffset = { x: 0, y: 0 };
+    let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
     let lastGrid = null;
+    let prevOffset = { x: 0, y: 0 };
     // Remove Typing Mode button and related logic
     // Remove typingBtn, contentEditable, and input event
     // Remove typingMode variable
@@ -87,9 +94,12 @@
     // Remove typingBtn.onclick, stage.addEventListener('input'), and typingMode checks
     // ... existing code ...
     // Only keep camera mode, pool UI, and segmentation logic
-    function renderStage(gridArr) {
-      lastGrid = gridArr;
-      document.getElementById('stage').textContent = gridArr.join('\n');
+    function renderStage() {
+      const lines = [];
+      for (let y = 0; y < ROWS; y++) {
+        lines.push(cachedGrid[y].join(''));
+      }
+      document.getElementById('stage').textContent = lines.join('\n');
     }
 
     function sendRegion(region, ox, oy) {
@@ -98,31 +108,79 @@
 
     // WebSocket setup (auto-detect protocol/host)
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+    let bytesSent = 0;
+    let bytesRecv = 0;
+    function updateBW() {
+      document.getElementById('bw-sent').textContent = bytesSent;
+      document.getElementById('bw-recv').textContent = bytesRecv;
+    }
+    updateBW();
+    // Patch ws.onmessage to handle binary diffs and count bytes
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'id') {
-        myId = data.id;
-      } else if (data.type === 'grid') {
-        renderStage(data.grid);
-      } else if (data.type === 'pool') {
-        renderPool(data.pool);
+      if (typeof event.data === 'string') {
+        bytesRecv += event.data.length;
+        updateBW();
+        const data = JSON.parse(event.data);
+        if (data.type === 'id') {
+          myId = data.id;
+        } else if (data.type === 'grid') {
+          cachedGrid = data.grid.map(row => row.split(''));
+          renderStage();
+        } else if (data.type === 'pool') {
+          renderPool(data.pool);
+        }
+      } else {
+        // Binary diff message
+        let reader = new FileReader();
+        reader.onload = function() {
+          const buffer = reader.result;
+          bytesRecv += buffer.byteLength;
+          updateBW();
+          const diffs = unpackDiffs(buffer);
+          for (const { x, y, char } of diffs) {
+            if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+              cachedGrid[y][x] = char;
+            }
+          }
+          renderStage();
+        };
+        reader.readAsArrayBuffer(event.data);
       }
     };
 
     // Reset button
     document.getElementById('reset-btn').onclick = () => {
-      ws.send(JSON.stringify({ type: 'reset' }));
+      sendJson({ type: 'reset' });
     };
 
-    // Keyboard controls for moving offset (only in camera mode)
+    // Keyboard controls for moving offset (camera viewport)
     document.addEventListener('keydown', (e) => {
       let changed = false;
-      if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
-      if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
-      if (e.key === 'ArrowLeft' || e.key === 'a') { myOffset.x = Math.max(0, myOffset.x - 2); changed = true; }
-      if (e.key === 'ArrowRight' || e.key === 'd') { myOffset.x = Math.min(500 - 160, myOffset.x + 2); changed = true; }
-      if (changed) {
-        ws.send(JSON.stringify({ id: myId, offset: myOffset }));
+      const step = 2; // Slower camera move
+      let newOffset = { ...myOffset };
+      if (e.key === 'ArrowUp' || e.key === 'w') { newOffset.y = Math.max(0, myOffset.y - step); }
+      if (e.key === 'ArrowDown' || e.key === 's') { newOffset.y = Math.min(ROWS - VIEW_ROWS, myOffset.y + step); }
+      if (e.key === 'ArrowLeft' || e.key === 'a') { newOffset.x = Math.max(0, myOffset.x - step); }
+      if (e.key === 'ArrowRight' || e.key === 'd') { newOffset.x = Math.min(COLS - VIEW_COLS, myOffset.x + step); }
+      if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
+        // Erase previous region
+        let eraseDiffs = [];
+        for (let y = 0; y < VIEW_ROWS; y++) {
+          for (let x = 0; x < VIEW_COLS; x++) {
+            const gx = myOffset.x + x;
+            const gy = myOffset.y + y;
+            if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+              eraseDiffs.push({ x: gx, y: gy, char: '.' });
+              cachedGrid[gy][gx] = '.';
+            }
+          }
+        }
+        if (eraseDiffs.length > 0) {
+          ws.send(packDiffs(eraseDiffs));
+        }
+        prevOffset = { ...myOffset };
+        myOffset = newOffset;
+        renderStage();
       }
     });
 
@@ -152,39 +210,117 @@
     });
     camera.start();
 
-    let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
+    function applyDiffs(diffs, ox = 0, oy = 0) {
+      for (const { x, y, char } of diffs) {
+        const gx = x + ox;
+        const gy = y + oy;
+        if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS) {
+          cachedGrid[gy][gx] = char;
+        }
+      }
+      renderStage();
+    }
+
+    // Helper to pack diffs into binary
+    function packDiffs(diffs) {
+      const buffer = new ArrayBuffer(2 + diffs.length * 5);
+      const view = new DataView(buffer);
+      view.setUint16(0, diffs.length, true);
+      for (let i = 0; i < diffs.length; i++) {
+        view.setUint16(2 + i * 5, diffs[i].x, true);
+        view.setUint16(4 + i * 5, diffs[i].y, true);
+        view.setUint8(6 + i * 5, diffs[i].char.charCodeAt(0));
+      }
+      return buffer;
+    }
+    // Helper to unpack binary diffs
+    function unpackDiffs(buffer) {
+      const view = new DataView(buffer);
+      const count = view.getUint16(0, true);
+      const diffs = [];
+      for (let i = 0; i < count; i++) {
+        const x = view.getUint16(2 + i * 5, true);
+        const y = view.getUint16(4 + i * 5, true);
+        const char = String.fromCharCode(view.getUint8(6 + i * 5));
+        diffs.push({ x, y, char });
+      }
+      return diffs;
+    }
+
+    // Patch ws.onmessage to handle binary diffs
+    const oldWsOnMessage = ws.onmessage;
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        const data = JSON.parse(event.data);
+        if (data.type === 'id') {
+          myId = data.id;
+        } else if (data.type === 'grid') {
+          cachedGrid = data.grid.map(row => row.split(''));
+          renderStage();
+        } else if (data.type === 'pool') {
+          renderPool(data.pool);
+        }
+      } else {
+        // Binary diff message
+        let reader = new FileReader();
+        reader.onload = function() {
+          const buffer = reader.result;
+          const diffs = unpackDiffs(buffer);
+          for (const { x, y, char } of diffs) {
+            if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
+              cachedGrid[y][x] = char;
+            }
+          }
+          renderStage();
+        };
+        reader.readAsArrayBuffer(event.data);
+      }
+    };
+
+    // When sending diffs, use binary and count bytes
+    function sendDiffs(diffs) {
+      if (diffs.length > 0) {
+        const buf = packDiffs(diffs);
+        ws.send(buf);
+        bytesSent += buf.byteLength;
+        updateBW();
+      }
+    }
+
+    // Update onSegmentationResults to use sendDiffs
     function onSegmentationResults(results) {
-      // Draw the mask to maskCanvas
-      maskCtx.clearRect(0, 0, COLS, ROWS);
-      maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
-      // Draw the video frame to canvas
-      ctx.drawImage(video, 0, 0, COLS, ROWS);
-      const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
-      const maskData = maskCtx.getImageData(0, 0, COLS, ROWS).data;
+      maskCtx.clearRect(0, 0, VIEW_COLS, VIEW_ROWS);
+      maskCtx.drawImage(results.segmentationMask, 0, 0, VIEW_COLS, VIEW_ROWS);
+      ctx.drawImage(video, 0, 0, VIEW_COLS, VIEW_ROWS);
+      const imgData = ctx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
+      const maskData = maskCtx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
       let diffs = [];
-      for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-          const idx = (y * COLS + x) * 4;
-          // Use mask alpha to determine if this pixel is person or background
+      for (let y = 0; y < VIEW_ROWS; y++) {
+        for (let x = 0; x < VIEW_COLS; x++) {
+          const idx = (y * VIEW_COLS + x) * 4;
           const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
           let char = '.';
           if (isPerson) {
             const r = imgData[idx];
             const g = imgData[idx + 1];
             const b = imgData[idx + 2];
-            // Luminance
             const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
             char = ASCII_CHARS[charIdx];
           }
-          if (cachedGrid[y][x] !== char) {
-            diffs.push({ x, y, char });
-            cachedGrid[y][x] = char;
+          const gx = myOffset.x + x;
+          const gy = myOffset.y + y;
+          if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+            if (cachedGrid[gy][gx] !== char) {
+              diffs.push({ x: gx, y: gy, char });
+              cachedGrid[gy][gx] = char;
+            }
           }
         }
       }
       if (diffs.length > 0) {
-        ws.send(JSON.stringify({ type: 'diff', diffs }));
+        ws.send(packDiffs(diffs));
+        renderStage();
       }
     }
 
@@ -211,12 +347,21 @@
       }
     }
 
+    // For JSON messages (add_pool_text, delete_pool_text, reset), count bytes
+    function sendJson(obj) {
+      const str = JSON.stringify(obj);
+      ws.send(str);
+      bytesSent += str.length;
+      updateBW();
+    }
+    // Replace ws.send(JSON.stringify(...)) with sendJson(...)
     addPoolBtn.onclick = () => {
       const t = poolInput.value.trim();
       if (!t) return;
-      ws.send(JSON.stringify({ type: 'add_pool_text', text: t }));
+      sendJson({ type: 'add_pool_text', text: t });
       poolInput.value = '';
     };
   </script>
 </body>
 </html>
+
