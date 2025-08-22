@@ -178,10 +178,12 @@ wss.on('connection', (ws) => {
               cellOwners[y][x] = id;
               diffsToSend.push({ x, y, char });
             } else {
-              // Erase cell, but don't set cellOwners
-              sharedGrid[y][x] = EMPTY;
-              cellOwners[y][x] = null;
-              diffsToSend.push({ x, y, char });
+              // Erase cell, but don't set cellOwners, and don't erase locked cells
+              if (!lockedCells.has(gridKey(x, y))) {
+                sharedGrid[y][x] = EMPTY;
+                cellOwners[y][x] = null;
+                diffsToSend.push({ x, y, char });
+              }
             }
           }
         }

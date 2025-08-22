@@ -57,27 +57,38 @@
   <div style="position:fixed;top:8px;right:16px;z-index:1000;color:#0f0;font-size:14px;background:#111;padding:4px 12px;border-radius:6px;opacity:0.95;" id="bw-monitor">
     Sent: <span id="bw-sent">0</span> bytes | Recv: <span id="bw-recv">0</span> bytes
   </div>
-  <div id="dpad" style="position:fixed;left:16px;bottom:24px;z-index:1001;display:flex;flex-direction:column;align-items:center;gap:4px;border:2px solid red;">
-    <button id="dpad-up" style="width:48px;height:48px;font-size:2rem;">▲</button>
-    <div style="display:flex;gap:4px;">
-      <button id="dpad-left" style="width:48px;height:48px;font-size:2rem;">◀</button>
-      <button id="dpad-right" style="width:48px;height:48px;font-size:2rem;">▶</button>
+  <div id="dpad" style="position:fixed;left:16px;bottom:24px;z-index:1001;display:flex;flex-direction:column;align-items:center;gap:8px;border:2px solid red;">
+    <button id="dpad-up" style="width:72px;height:72px;font-size:2.5rem;">▲</button>
+    <div style="display:flex;gap:8px;">
+      <button id="dpad-left" style="width:72px;height:72px;font-size:2.5rem;">◀</button>
+      <button id="dpad-right" style="width:72px;height:72px;font-size:2.5rem;">▶</button>
     </div>
-    <button id="dpad-down" style="width:48px;height:48px;font-size:2rem;">▼</button>
+    <button id="dpad-down" style="width:72px;height:72px;font-size:2.5rem;">▼</button>
+  </div>
+  <div id="joystick" style="position:fixed;right:32px;bottom:48px;z-index:1001;width:120px;height:120px;background:#2228;border-radius:60px;display:flex;align-items:center;justify-content:center;touch-action:none;">
+    <div id="joystick-knob" style="width:48px;height:48px;background:#fff4;border-radius:24px;position:absolute;left:36px;top:36px;transition:left 0.1s,top 0.1s;"></div>
   </div>
   <style>
-    /* Remove media query for now */
     #dpad button {
       background: #222;
       color: #fff;
       border: 2px solid #444;
-      border-radius: 12px;
+      border-radius: 16px;
       box-shadow: 0 2px 8px #0008;
       touch-action: manipulation;
       user-select: none;
     }
     #dpad button:active {
       background: #444;
+    }
+    #joystick {
+      box-shadow: 0 2px 12px #000a;
+      border: 2px solid #444;
+    }
+    #joystick-knob {
+      box-shadow: 0 2px 8px #0008;
+      border: 2px solid #888;
+      pointer-events: none;
     }
   </style>
   <div id="poolBox">
@@ -100,6 +111,7 @@
     const COLS = 500;
     const ROWS = 200;
     let myOffset = { x: 0, y: 0 };
+    let viewOffset = { x: 0, y: 0 };
     let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
     let lastGrid = null;
     let prevOffset = { x: 0, y: 0 };
@@ -120,8 +132,18 @@
     // Only keep camera mode, pool UI, and segmentation logic
     function renderStage() {
       const lines = [];
-      for (let y = 0; y < ROWS; y++) {
-        lines.push(cachedGrid[y].join(''));
+      for (let y = 0; y < VIEW_ROWS; y++) {
+        let row = '';
+        for (let x = 0; x < VIEW_COLS; x++) {
+          const gx = viewOffset.x + x;
+          const gy = viewOffset.y + y;
+          if (gy >= 0 && gy < ROWS && gx >= 0 && gx < COLS) {
+            row += cachedGrid[gy][gx];
+          } else {
+            row += ' ';
+          }
+        }
+        lines.push(row);
       }
       document.getElementById('stage').textContent = lines.join('\n');
       console.log('[DEBUG] renderStage called. First line:', lines[0]);
@@ -216,32 +238,120 @@
 
     // D-pad movement for mobile
     function dpadMove(dx, dy) {
-      let newOffset = { ...myOffset };
-      newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, myOffset.x + dx));
-      newOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, myOffset.y + dy));
-      if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
-        // Erase previous region
-        let eraseDiffs = [];
-        for (let y = 0; y < VIEW_ROWS; y++) {
-          for (let x = 0; x < VIEW_COLS; x++) {
-            eraseDiffs.push({ x: myOffset.x + x, y: myOffset.y + y, char: '.' });
-          }
-        }
-        ws.send(packDiffs(eraseDiffs));
-        prevOffset = { ...myOffset };
-        myOffset = newOffset;
+      let newOffset = { ...viewOffset };
+      newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, viewOffset.x + dx));
+      newOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, viewOffset.y + dy));
+      if (newOffset.x !== viewOffset.x || newOffset.y !== viewOffset.y) {
+        viewOffset = newOffset;
         renderStage();
       }
     }
-    document.getElementById('dpad-up').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(0, -2); });
-    document.getElementById('dpad-down').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(0, 2); });
-    document.getElementById('dpad-left').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(-2, 0); });
-    document.getElementById('dpad-right').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(2, 0); });
-    // Also support click for non-touch devices
-    document.getElementById('dpad-up').addEventListener('click', () => dpadMove(0, -2));
-    document.getElementById('dpad-down').addEventListener('click', () => dpadMove(0, 2));
-    document.getElementById('dpad-left').addEventListener('click', () => dpadMove(-2, 0));
-    document.getElementById('dpad-right').addEventListener('click', () => dpadMove(2, 0));
+    // D-pad hold-to-move logic
+    function startDpadMove(dx, dy) {
+      if (window.dpadInterval) clearInterval(window.dpadInterval);
+      dpadMove(dx, dy); // initial move
+      window.dpadInterval = setInterval(() => dpadMove(dx, dy), 80);
+    }
+    function stopDpadMove() {
+      if (window.dpadInterval) clearInterval(window.dpadInterval);
+      window.dpadInterval = null;
+    }
+    [
+      ['dpad-up', 0, -2],
+      ['dpad-down', 0, 2],
+      ['dpad-left', -2, 0],
+      ['dpad-right', 2, 0],
+    ].forEach(([id, dx, dy]) => {
+      const btn = document.getElementById(id);
+      btn.addEventListener('touchstart', e => { e.preventDefault(); startDpadMove(dx, dy); });
+      btn.addEventListener('touchend', stopDpadMove);
+      btn.addEventListener('touchcancel', stopDpadMove);
+      btn.addEventListener('mousedown', e => { e.preventDefault(); startDpadMove(dx, dy); });
+      btn.addEventListener('mouseup', stopDpadMove);
+      btn.addEventListener('mouseleave', stopDpadMove);
+      btn.addEventListener('mouseout', stopDpadMove);
+      btn.addEventListener('click', () => dpadMove(dx, dy)); // fallback for tap
+    });
+
+    // Joystick logic
+    const joystick = document.getElementById('joystick');
+    const knob = document.getElementById('joystick-knob');
+    let joyActive = false, joyCenter = { x: 60, y: 60 }, joyMove = { x: 0, y: 0 };
+    let joyInterval = null;
+    function setKnob(x, y) {
+      knob.style.left = (x - 24) + 'px';
+      knob.style.top = (y - 24) + 'px';
+    }
+    function joyStart(e) {
+      joyActive = true;
+      joyMove = { x: 0, y: 0 };
+      setKnob(joyCenter.x, joyCenter.y);
+      if (joyInterval) clearInterval(joyInterval);
+      joyInterval = setInterval(() => {
+        if (joyMove.x !== 0 || joyMove.y !== 0) {
+          let newOffset = { ...myOffset };
+          newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, myOffset.x + Math.round(joyMove.x * 2)));
+          newOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, myOffset.y + Math.round(joyMove.y * 2)));
+          if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
+            // Erase previous body pixels
+            let eraseDiffs = [];
+            if (prevMask) {
+              for (let y = 0; y < VIEW_ROWS; y++) {
+                for (let x = 0; x < VIEW_COLS; x++) {
+                  if (prevMask[y] && prevMask[y][x]) {
+                    const gx = myOffset.x + x;
+                    const gy = myOffset.y + y;
+                    if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+                      eraseDiffs.push({ x: gx, y: gy, char: '.' });
+                      cachedGrid[gy][gx] = '.';
+                    }
+                  }
+                }
+              }
+            }
+            if (eraseDiffs.length > 0) {
+              ws.send(packDiffs(eraseDiffs));
+            }
+            prevOffset = { ...myOffset };
+            myOffset = newOffset;
+            renderStage();
+          }
+        }
+      }, 60);
+    }
+    function joyMoveHandler(e) {
+      if (!joyActive) return;
+      let touch = e.touches ? e.touches[0] : e;
+      const rect = joystick.getBoundingClientRect();
+      let x = touch.clientX - rect.left;
+      let y = touch.clientY - rect.top;
+      let dx = x - joyCenter.x;
+      let dy = y - joyCenter.y;
+      let dist = Math.sqrt(dx*dx + dy*dy);
+      let maxDist = 40;
+      if (dist > maxDist) {
+        dx = dx * maxDist / dist;
+        dy = dy * maxDist / dist;
+        dist = maxDist;
+      }
+      setKnob(joyCenter.x + dx, joyCenter.y + dy);
+      joyMove.x = dx / maxDist;
+      joyMove.y = dy / maxDist;
+    }
+    function joyEnd() {
+      joyActive = false;
+      setKnob(joyCenter.x, joyCenter.y);
+      joyMove = { x: 0, y: 0 };
+      if (joyInterval) clearInterval(joyInterval);
+    }
+    joystick.addEventListener('touchstart', joyStart);
+    joystick.addEventListener('touchmove', joyMoveHandler);
+    joystick.addEventListener('touchend', joyEnd);
+    joystick.addEventListener('touchcancel', joyEnd);
+    joystick.addEventListener('mousedown', joyStart);
+    joystick.addEventListener('mousemove', joyMoveHandler);
+    joystick.addEventListener('mouseup', joyEnd);
+    joystick.addEventListener('mouseleave', joyEnd);
 
     // Webcam and ASCII conversion (only in camera mode)
     const video = document.getElementById('video');
@@ -428,7 +538,7 @@
       poolInput.value = '';
     };
     // Unhide video for debugging on mobile
-    document.getElementById('video').style.display = 'block';
+    document.getElementById('video').style.display = 'none';
   </script>
 </body>
 </html>
