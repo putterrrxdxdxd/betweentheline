@@ -159,23 +159,30 @@ wss.on('connection', (ws) => {
             x >= 0 && x < COLS && y >= 0 && y < ROWS &&
             typeof char === 'string' && char.length === 1 && !lockedCells.has(gridKey(x, y))
           ) {
-            // Overlap logic
-            if (
-              sharedGrid[y][x] !== EMPTY && char !== EMPTY && sharedGrid[y][x] !== char &&
-              cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(gridKey(x, y))
-            ) {
-              writeOverlapText(sharedGrid, x, y);
-              const text = randomOverlapText();
-              for (let i = 0; i < text.length && x + i < COLS; i++) {
-                sharedGrid[y][x + i] = text[i];
-                lockedCells.add(gridKey(x + i, y));
-                diffsToSend.push({ x: x + i, y, char: text[i] });
+            if (char !== EMPTY) {
+              // Overlap logic for body pixels only
+              if (
+                sharedGrid[y][x] !== EMPTY && sharedGrid[y][x] !== char &&
+                cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(gridKey(x, y))
+              ) {
+                writeOverlapText(sharedGrid, x, y);
+                const text = randomOverlapText();
+                for (let i = 0; i < text.length && x + i < COLS; i++) {
+                  sharedGrid[y][x + i] = text[i];
+                  lockedCells.add(gridKey(x + i, y));
+                  diffsToSend.push({ x: x + i, y, char: text[i] });
+                }
+                continue;
               }
-              continue;
+              sharedGrid[y][x] = char;
+              cellOwners[y][x] = id;
+              diffsToSend.push({ x, y, char });
+            } else {
+              // Erase cell, but don't set cellOwners
+              sharedGrid[y][x] = EMPTY;
+              cellOwners[y][x] = null;
+              diffsToSend.push({ x, y, char });
             }
-            sharedGrid[y][x] = char;
-            cellOwners[y][x] = id;
-            diffsToSend.push({ x, y, char });
           }
         }
         if (diffsToSend.length > 0) {

@@ -57,7 +57,7 @@
   <div style="position:fixed;top:8px;right:16px;z-index:1000;color:#0f0;font-size:14px;background:#111;padding:4px 12px;border-radius:6px;opacity:0.95;" id="bw-monitor">
     Sent: <span id="bw-sent">0</span> bytes | Recv: <span id="bw-recv">0</span> bytes
   </div>
-  <div id="dpad" style="position:fixed;left:16px;bottom:24px;z-index:1001;display:none;flex-direction:column;align-items:center;gap:4px;">
+  <div id="dpad" style="position:fixed;left:16px;bottom:24px;z-index:1001;display:flex;flex-direction:column;align-items:center;gap:4px;border:2px solid red;">
     <button id="dpad-up" style="width:48px;height:48px;font-size:2rem;">▲</button>
     <div style="display:flex;gap:4px;">
       <button id="dpad-left" style="width:48px;height:48px;font-size:2rem;">◀</button>
@@ -66,9 +66,7 @@
     <button id="dpad-down" style="width:48px;height:48px;font-size:2rem;">▼</button>
   </div>
   <style>
-    @media (max-width: 900px) {
-      #dpad { display: flex !important; }
-    }
+    /* Remove media query for now */
     #dpad button {
       background: #222;
       color: #fff;
@@ -105,6 +103,7 @@
     let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
     let lastGrid = null;
     let prevOffset = { x: 0, y: 0 };
+    let prevMask = null;
     // Remove Typing Mode button and related logic
     // Remove typingBtn, contentEditable, and input event
     // Remove typingMode variable
@@ -125,6 +124,7 @@
         lines.push(cachedGrid[y].join(''));
       }
       document.getElementById('stage').textContent = lines.join('\n');
+      console.log('[DEBUG] renderStage called. First line:', lines[0]);
     }
 
     function sendRegion(region, ox, oy) {
@@ -162,6 +162,7 @@
           bytesRecv += buffer.byteLength;
           updateBW();
           const diffs = unpackDiffs(buffer);
+          console.log('[DEBUG] ws.onmessage received diffs:', diffs.length, diffs.slice(0, 5));
           for (const { x, y, char } of diffs) {
             if (y >= 0 && y < ROWS && x >= 0 && x < COLS) {
               cachedGrid[y][x] = char;
@@ -188,15 +189,19 @@
       if (e.key === 'ArrowLeft' || e.key === 'a') { newOffset.x = Math.max(0, myOffset.x - step); }
       if (e.key === 'ArrowRight' || e.key === 'd') { newOffset.x = Math.min(COLS - VIEW_COLS, myOffset.x + step); }
       if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
-        // Erase previous region
+        // Erase only previous body pixels
         let eraseDiffs = [];
-        for (let y = 0; y < VIEW_ROWS; y++) {
-          for (let x = 0; x < VIEW_COLS; x++) {
-            const gx = myOffset.x + x;
-            const gy = myOffset.y + y;
-            if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
-              eraseDiffs.push({ x: gx, y: gy, char: '.' });
-              cachedGrid[gy][gx] = '.';
+        if (prevMask) {
+          for (let y = 0; y < VIEW_ROWS; y++) {
+            for (let x = 0; x < VIEW_COLS; x++) {
+              if (prevMask[y] && prevMask[y][x]) {
+                const gx = myOffset.x + x;
+                const gy = myOffset.y + y;
+                if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
+                  eraseDiffs.push({ x: gx, y: gy, char: '.' });
+                  cachedGrid[gy][gx] = '.';
+                }
+              }
             }
           }
         }
@@ -349,10 +354,15 @@
       const imgData = ctx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
       const maskData = maskCtx.getImageData(0, 0, VIEW_COLS, VIEW_ROWS).data;
       let diffs = [];
+      let newMask = [];
+      let bodyPixelCount = 0;
       for (let y = 0; y < VIEW_ROWS; y++) {
+        newMask[y] = [];
         for (let x = 0; x < VIEW_COLS; x++) {
           const idx = (y * VIEW_COLS + x) * 4;
           const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
+          if (isPerson) bodyPixelCount++;
+          newMask[y][x] = isPerson ? 1 : 0;
           let char = '.';
           if (isPerson) {
             const r = imgData[idx];
@@ -365,13 +375,15 @@
           const gx = myOffset.x + x;
           const gy = myOffset.y + y;
           if (gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS) {
-            if (cachedGrid[gy][gx] !== char) {
+            if (isPerson && char !== '.' && cachedGrid[gy][gx] !== char) {
               diffs.push({ x: gx, y: gy, char });
               cachedGrid[gy][gx] = char;
             }
           }
         }
       }
+      console.log('[DEBUG] onSegmentationResults fired. Body pixels:', bodyPixelCount);
+      prevMask = newMask;
       if (diffs.length > 0) {
         ws.send(packDiffs(diffs));
         renderStage();
@@ -415,6 +427,8 @@
       sendJson({ type: 'add_pool_text', text: t });
       poolInput.value = '';
     };
+    // Unhide video for debugging on mobile
+    document.getElementById('video').style.display = 'block';
   </script>
 </body>
 </html>
