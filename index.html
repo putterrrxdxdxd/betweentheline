@@ -53,6 +53,7 @@
   <div>
     <button id="typing-btn">Typing Mode</button>
     <button id="reset-btn">Reset Stars</button>
+    <button id="export-overlaps-btn">Export Overlaps</button>
   </div>
   <div style="position:fixed;top:8px;right:16px;z-index:1000;color:#0f0;font-size:14px;background:#111;padding:4px 12px;border-radius:6px;opacity:0.95;" id="bw-monitor">
     Sent: <span id="bw-sent">0</span> bytes | Recv: <span id="bw-recv">0</span> bytes
@@ -106,13 +107,13 @@
     <canvas id="minimap-canvas" width="120" height="48" style="width:120px;height:48px;"></canvas>
   </div>
   <script>
-    // ASCII characters from dark to light
+    // Safe Thai/Khmer base characters (no combining marks)
+    const SAFE_THAI_CHARS = ['ก','ข','ค','ง','จ','ฉ','ช','ซ','ฌ','ญ','ฎ','ฏ','ฐ','ฑ','ฒ','ณ','ด','ต','ถ','ท','ธ','น','บ','ป','ผ','ฝ','พ','ฟ','ภ','ม','ย','ร','ฤ','ล','ฦ','ว','ศ','ษ','ส','ห','ฬ','อ','ฮ'];
+    const SAFE_KHMER_CHARS = ['ក','ខ','គ','ឃ','ង','ច','ឆ','ជ','ឈ','ញ','ដ','ឋ','ឌ','ឍ','ណ','ត','ថ','ទ','ធ','ន','ប','ផ','ព','ភ','ម','យ','រ','ល','វ','ស','ហ','ឡ','អ'];
     const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
-    const THAI_CHARS = [' ', 'ก', 'ข', 'ค', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต', 'ถ', 'ท', 'ธ', 'น', 'บ', 'ป', 'ผ', 'ฝ', 'พ', 'ฟ', 'ภ', 'ม', 'ย', 'ร', 'ฤ', 'ล', 'ฦ', 'ว', 'ศ', 'ษ', 'ส', 'ห', 'ฬ', 'อ', 'ฮ'];
-    const KHMER_CHARS = [' ', 'ក', 'ខ', 'គ', 'ឃ', 'ង', 'ច', 'ឆ', 'ជ', 'ឈ', 'ញ', 'ដ', 'ឋ', 'ឌ', 'ឍ', 'ណ', 'ត', 'ថ', 'ទ', 'ធ', 'ន', 'ប', 'ផ', 'ព', 'ភ', 'ម', 'យ', 'រ', 'ល', 'វ', 'ស', 'ហ', 'ឡ', 'អ'];
     let BODY_CHARS = ASCII_CHARS;
     function pickBodyCharset() {
-      const sets = [ASCII_CHARS, THAI_CHARS, KHMER_CHARS];
+      const sets = [ASCII_CHARS, SAFE_THAI_CHARS, SAFE_KHMER_CHARS];
       BODY_CHARS = sets[Math.floor(Math.random() * sets.length)];
     }
     pickBodyCharset();
@@ -596,6 +597,24 @@
     };
     // Unhide video for debugging on mobile
     document.getElementById('video').style.display = 'none';
+
+    // Export Overlaps button logic
+    document.getElementById('export-overlaps-btn').onclick = () => {
+      fetch('/export-overlaps')
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'overlaps.txt';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+          }, 100);
+        });
+    };
 
     function renderMinimap() {
       const mm = document.getElementById('minimap');

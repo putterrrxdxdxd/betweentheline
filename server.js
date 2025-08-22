@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 
 const COLS = 500;
 const ROWS = 200;
@@ -42,7 +43,9 @@ function randomOverlapText() {
 
 function writeOverlapText(grid, x, y) {
   const text = randomOverlapText();
-  const codePoints = Array.from(text);
+  // Remove Unicode combining marks (category Mn)
+  const safeText = Array.from(text).filter(c => !/\p{Mn}/u.test(c)).join('');
+  const codePoints = Array.from(safeText);
   for (let i = 0; i < codePoints.length && x + i < COLS; i++) {
     grid[y][x + i] = codePoints[i];
     lockedCells.add(gridKey(x + i, y));
@@ -144,6 +147,35 @@ function packDiffs(diffs) {
   return buffer;
 }
 
+// Export overlaps endpoint
+app.get('/export-overlaps', (req, res) => {
+  // Scan the grid for all locked cells and extract unique overlap texts
+  let found = new Set();
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const key = gridKey(x, y);
+      if (lockedCells.has(key)) {
+        // Collect the full text from this locked run
+        let text = '';
+        let start = x;
+        while (x < COLS && lockedCells.has(gridKey(x, y))) {
+          text += sharedGrid[y][x];
+          x++;
+        }
+        text = text.trim();
+        if (text) found.add(text);
+      } else {
+        x++;
+      }
+    }
+  }
+  const output = Array.from(found).join('\n');
+  res.setHeader('Content-Disposition', 'attachment; filename="overlaps.txt"');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(output);
+});
+
 wss.on('connection', (ws) => {
   const id = uuidv4();
   ws.send(JSON.stringify({ type: 'id', id }));
@@ -166,9 +198,10 @@ wss.on('connection', (ws) => {
                 sharedGrid[y][x] !== EMPTY && sharedGrid[y][x] !== char &&
                 cellOwners[y][x] && cellOwners[y][x] !== id && !lockedCells.has(gridKey(x, y))
               ) {
-                // Write overlap text (Unicode-aware)
+                // Write overlap text (Unicode-aware, safe)
                 const text = randomOverlapText();
-                const codePoints = Array.from(text);
+                const safeText = Array.from(text).filter(c => !/\p{Mn}/u.test(c)).join('');
+                const codePoints = Array.from(safeText);
                 for (let i = 0; i < codePoints.length && x + i < COLS; i++) {
                   sharedGrid[y][x + i] = codePoints[i];
                   lockedCells.add(gridKey(x + i, y));
