@@ -57,6 +57,31 @@
   <div style="position:fixed;top:8px;right:16px;z-index:1000;color:#0f0;font-size:14px;background:#111;padding:4px 12px;border-radius:6px;opacity:0.95;" id="bw-monitor">
     Sent: <span id="bw-sent">0</span> bytes | Recv: <span id="bw-recv">0</span> bytes
   </div>
+  <div id="dpad" style="position:fixed;left:16px;bottom:24px;z-index:1001;display:none;flex-direction:column;align-items:center;gap:4px;">
+    <button id="dpad-up" style="width:48px;height:48px;font-size:2rem;">▲</button>
+    <div style="display:flex;gap:4px;">
+      <button id="dpad-left" style="width:48px;height:48px;font-size:2rem;">◀</button>
+      <button id="dpad-right" style="width:48px;height:48px;font-size:2rem;">▶</button>
+    </div>
+    <button id="dpad-down" style="width:48px;height:48px;font-size:2rem;">▼</button>
+  </div>
+  <style>
+    @media (max-width: 900px) {
+      #dpad { display: flex !important; }
+    }
+    #dpad button {
+      background: #222;
+      color: #fff;
+      border: 2px solid #444;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px #0008;
+      touch-action: manipulation;
+      user-select: none;
+    }
+    #dpad button:active {
+      background: #444;
+    }
+  </style>
   <div id="poolBox">
     <ul id="poolList"></ul>
     <div id="poolControls">
@@ -183,6 +208,35 @@
         renderStage();
       }
     });
+
+    // D-pad movement for mobile
+    function dpadMove(dx, dy) {
+      let newOffset = { ...myOffset };
+      newOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, myOffset.x + dx));
+      newOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, myOffset.y + dy));
+      if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
+        // Erase previous region
+        let eraseDiffs = [];
+        for (let y = 0; y < VIEW_ROWS; y++) {
+          for (let x = 0; x < VIEW_COLS; x++) {
+            eraseDiffs.push({ x: myOffset.x + x, y: myOffset.y + y, char: '.' });
+          }
+        }
+        ws.send(packDiffs(eraseDiffs));
+        prevOffset = { ...myOffset };
+        myOffset = newOffset;
+        renderStage();
+      }
+    }
+    document.getElementById('dpad-up').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(0, -2); });
+    document.getElementById('dpad-down').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(0, 2); });
+    document.getElementById('dpad-left').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(-2, 0); });
+    document.getElementById('dpad-right').addEventListener('touchstart', e => { e.preventDefault(); dpadMove(2, 0); });
+    // Also support click for non-touch devices
+    document.getElementById('dpad-up').addEventListener('click', () => dpadMove(0, -2));
+    document.getElementById('dpad-down').addEventListener('click', () => dpadMove(0, 2));
+    document.getElementById('dpad-left').addEventListener('click', () => dpadMove(-2, 0));
+    document.getElementById('dpad-right').addEventListener('click', () => dpadMove(2, 0));
 
     // Webcam and ASCII conversion (only in camera mode)
     const video = document.getElementById('video');
