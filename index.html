@@ -208,6 +208,15 @@
       for (const t of items) {
         const li = document.createElement('li');
         li.textContent = t;
+        // Add delete button
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '❌';
+        delBtn.style.marginLeft = '8px';
+        delBtn.style.fontSize = '12px';
+        delBtn.onclick = () => {
+          ws.send(JSON.stringify({ type: 'delete_pool_text', text: t }));
+        };
+        li.appendChild(delBtn);
         poolList.appendChild(li);
       }
     }
