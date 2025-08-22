@@ -89,16 +89,30 @@ resetBtn.onclick = () => {
 
 // --- Video capture ---
 const video = document.getElementById('video');
+let videoReady = false;
+
+video.onloadedmetadata = () => {
+  videoReady = true;
+};
+
 navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-  .then(stream => { video.srcObject = stream; })
+  .then(stream => { 
+    video.srcObject = stream;
+  })
   .catch(err => console.error('Camera error', err));
 
 // --- Send frames to worker ---
 function loop() {
-  if (!typingMode) {
-    createImageBitmap(video).then(bitmap => {
-      worker.postMessage({ type: 'frame', bitmap }, [bitmap]);
-    });
+  if (!typingMode && videoReady && video.videoWidth > 0 && video.videoHeight > 0) {
+    try {
+      createImageBitmap(video).then(bitmap => {
+        worker.postMessage({ type: 'frame', bitmap }, [bitmap]);
+      }).catch(err => {
+        // Silently ignore createImageBitmap errors when video isn't ready
+      });
+    } catch (err) {
+      // Silently ignore errors when video isn't ready
+    }
   }
   requestAnimationFrame(loop);
 }

@@ -3,14 +3,19 @@ const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const path = require('path');
 
-const COLS = 500;
-const ROWS = 200;
+const COLS = 160;
+const ROWS = 60;
 const EMPTY = '.';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname)));
+
+// Handle favicon request
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`HTTP/WS server running on http://0.0.0.0:${PORT}`);
 });
