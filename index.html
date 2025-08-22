@@ -7,7 +7,7 @@
     body {
       background: #000;
       color: #fff;
-      font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', monospace;
+      font-family: 'Noto Sans Mono', monospace;
       margin: 0;
       padding: 16px;
       display: flex;
@@ -22,13 +22,11 @@
       line-height: 1;
       margin: 0;
       user-select: none;
-      outline: none;
       background: #111;
       border: 1px solid #333;
       min-width: 80ch;
       min-height: 20em;
       padding: 8px;
-      box-sizing: border-box;
       white-space: pre;
     }
     #video { display: none; }
@@ -49,9 +47,6 @@
     #poolControls { display: flex; gap: 8px; align-items: center; }
     #poolInput { width: 320px; padding: 6px 8px; background:#111; color:#fff; border:1px solid #333; }
   </style>
-  <!-- MediaPipe Selfie Segmentation CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
   <div class="row">
@@ -59,160 +54,17 @@
     <button id="reset-btn">Reset</button>
   </div>
   <div id="poolBox">
-    <ul id="poolList" aria-label="Overlap text pool"></ul>
+    <ul id="poolList"></ul>
     <div id="poolControls">
       <input id="poolInput" placeholder="Add overlap text…" />
       <button id="addPoolBtn">Add</button>
     </div>
   </div>
-  <pre id="stage" contenteditable="false" spellcheck="false"></pre>
+  <pre id="stage"></pre>
   <video id="video" autoplay playsinline></video>
-  <canvas id="canvas" width="160" height="60" style="display:none;"></canvas>
-  <canvas id="mask" width="160" height="60" style="display:none;"></canvas>
-  <script>
-    // ASCII characters from dark to light
-    const ASCII_CHARS = [' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
-    const COLS = 160;
-    const ROWS = 60;
-    let myId = null;
-    let myOffset = { x: 0, y: 0 };
-    let lastGrid = null;
-    let typingMode = false;
 
-    function renderStage(gridArr) {
-      lastGrid = gridArr;
-      document.getElementById('stage').textContent = gridArr.join('\n');
-    }
-
-    // WebSocket setup (auto-detect protocol/host)
-    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'id') {
-        myId = data.id;
-      } else if (data.type === 'grid') {
-        renderStage(data.grid);
-      } else if (data.type === 'pool') {
-        renderPool(Array.isArray(data.pool) ? data.pool : []);
-      }
-    };
-
-    // Pool UI
-    const poolList = document.getElementById('poolList');
-    const poolInput = document.getElementById('poolInput');
-    const addPoolBtn = document.getElementById('addPoolBtn');
-
-    function renderPool(items) {
-      poolList.innerHTML = '';
-      for (const t of items) {
-        const li = document.createElement('li');
-        li.textContent = t;
-        poolList.appendChild(li);
-      }
-    }
-
-    addPoolBtn.onclick = () => {
-      const t = poolInput.value.trim();
-      if (!t) return;
-      ws.send(JSON.stringify({ type: 'add_pool_text', text: t }));
-      poolInput.value = '';
-    };
-
-    // Typing mode toggle
-    const typingBtn = document.getElementById('typing-btn');
-    const stage = document.getElementById('stage');
-    typingBtn.onclick = () => {
-      typingMode = !typingMode;
-      stage.contentEditable = typingMode ? 'true' : 'false';
-      typingBtn.textContent = typingMode ? 'Camera Mode' : 'Typing Mode';
-      if (!typingMode && lastGrid) {
-        renderStage(lastGrid);
-      }
-    };
-
-    // Send edits in typing mode
-    stage.addEventListener('input', () => {
-      if (!typingMode) return;
-      const lines = stage.textContent.split('\n').slice(0, ROWS);
-      while (lines.length < ROWS) lines.push(' '.repeat(COLS));
-      const grid = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
-      ws.send(JSON.stringify({ type: 'edit', grid }));
-    });
-
-    // Reset button
-    document.getElementById('reset-btn').onclick = () => {
-      ws.send(JSON.stringify({ type: 'reset' }));
-    };
-
-    // Keyboard controls for moving offset (only in camera mode)
-    document.addEventListener('keydown', (e) => {
-      if (typingMode) return;
-      let changed = false;
-      if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
-      if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
-      if (e.key === 'ArrowLeft' || e.key === 'a') { myOffset.x = Math.max(0, myOffset.x - 2); changed = true; }
-      if (e.key === 'ArrowRight' || e.key === 'd') { myOffset.x = Math.min(500 - 160, myOffset.x + 2); changed = true; }
-      if (changed) {
-        ws.send(JSON.stringify({ id: myId, offset: myOffset }));
-      }
-    });
-
-    // Webcam and ASCII conversion (only in camera mode)
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const maskCanvas = document.getElementById('mask');
-    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
-
-    // MediaPipe Selfie Segmentation setup
-    const selfieSegmentation = new SelfieSegmentation({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-    });
-    selfieSegmentation.setOptions({ modelSelection: 1 });
-    selfieSegmentation.onResults(onSegmentationResults);
-
-    // Camera setup
-    const camera = new Camera(video, {
-      onFrame: async () => { if (!typingMode) await selfieSegmentation.send({ image: video }); },
-      width: 640,
-      height: 480
-    });
-    camera.start();
-
-    function sendRegion(region, ox, oy) {
-      ws.send(JSON.stringify({ type: 'region', region, ox, oy }));
-    }
-
-    function onSegmentationResults(results) {
-      if (typingMode) return;
-      // Draw the mask to maskCanvas
-      maskCtx.clearRect(0, 0, COLS, ROWS);
-      maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
-      // Draw the video frame to canvas
-      ctx.drawImage(video, 0, 0, COLS, ROWS);
-      const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
-      const maskData = maskCtx.getImageData(0, 0, COLS, ROWS).data;
-      const asciiGrid = [];
-      for (let y = 0; y < ROWS; y++) {
-        let row = '';
-        for (let x = 0; x < COLS; x++) {
-          const idx = (y * COLS + x) * 4;
-          const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
-          if (isPerson) {
-            const r = imgData[idx];
-            const g = imgData[idx + 1];
-            const b = imgData[idx + 2];
-            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
-            row += ASCII_CHARS[charIdx];
-          } else {
-            row += '.';
-          }
-        }
-        asciiGrid.push(row);
-      }
-      sendRegion(asciiGrid, myOffset.x, myOffset.y);
-    }
-  </script>
+  <!-- Load client logic -->
+  <script src="client.js"></script>
 </body>
 </html>
+
