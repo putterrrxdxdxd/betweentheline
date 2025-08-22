@@ -134,43 +134,35 @@
     // Remove typingBtn.onclick, stage.addEventListener('input'), and typingMode checks
     // ... existing code ...
     // Only keep camera mode, pool UI, and segmentation logic
-    // Responsive viewport sizing for mobile
+    // Responsive viewport sizing for mobile, but always show controls
     let VIEW_COLS = 80, VIEW_ROWS = 32;
     function isMobile() {
       return window.innerWidth < 900;
     }
     function updateViewportSize() {
-      if (!isMobile()) {
-        VIEW_COLS = COLS;
-        VIEW_ROWS = ROWS;
-        viewOffset = { x: 0, y: 0 };
-        document.getElementById('dpad').style.display = 'none';
-        document.getElementById('joystick').style.display = 'none';
-        document.getElementById('minimap').style.display = 'none';
-      } else {
-        // Estimate font metrics
-        const pre = document.getElementById('stage');
-        pre.style.fontSize = '14px';
-        pre.style.lineHeight = '1';
-        const testSpan = document.createElement('span');
-        testSpan.textContent = 'A';
-        pre.appendChild(testSpan);
-        const charWidth = testSpan.offsetWidth;
-        const charHeight = testSpan.offsetHeight;
-        pre.removeChild(testSpan);
-        // Calculate available space
-        const pad = 32 + 120; // UI padding + joystick/minimap
-        const availW = window.innerWidth - pad;
-        const availH = window.innerHeight - 180; // leave space for dpad
-        VIEW_COLS = Math.max(10, Math.min(COLS, Math.floor(availW / charWidth)));
-        VIEW_ROWS = Math.max(5, Math.min(ROWS, Math.floor(availH / charHeight)));
-        // Clamp viewOffset
-        viewOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, viewOffset.x));
-        viewOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, viewOffset.y));
-        document.getElementById('dpad').style.display = 'flex';
-        document.getElementById('joystick').style.display = 'flex';
-        document.getElementById('minimap').style.display = 'block';
-      }
+      // Responsive viewport sizing for mobile, but always show controls
+      // Estimate font metrics
+      const pre = document.getElementById('stage');
+      pre.style.fontSize = '14px';
+      pre.style.lineHeight = '1';
+      const testSpan = document.createElement('span');
+      testSpan.textContent = 'A';
+      pre.appendChild(testSpan);
+      const charWidth = testSpan.offsetWidth;
+      const charHeight = testSpan.offsetHeight;
+      pre.removeChild(testSpan);
+      // Calculate available space
+      const pad = 32 + 120; // UI padding + joystick/minimap
+      const availW = window.innerWidth - pad;
+      const availH = window.innerHeight - 180; // leave space for dpad
+      VIEW_COLS = Math.max(10, Math.min(COLS, Math.floor(availW / charWidth)));
+      VIEW_ROWS = Math.max(5, Math.min(ROWS, Math.floor(availH / charHeight)));
+      // Clamp viewOffset
+      viewOffset.x = Math.max(0, Math.min(COLS - VIEW_COLS, viewOffset.x));
+      viewOffset.y = Math.max(0, Math.min(ROWS - VIEW_ROWS, viewOffset.y));
+      document.getElementById('dpad').style.display = 'flex';
+      document.getElementById('joystick').style.display = 'flex';
+      document.getElementById('minimap').style.display = 'block';
       renderStage();
       renderMinimap();
     }
@@ -255,21 +247,21 @@
       sendJson({ type: 'reset' });
     };
 
-    // Keyboard controls for moving offset (camera viewport)
+    // Keyboard controls: WASD/arrow keys move camera region (myOffset)
     document.addEventListener('keydown', (e) => {
       let changed = false;
-      const step = 2; // Slower camera move
+      const step = 2;
       let newOffset = { ...myOffset };
-      if (e.key === 'ArrowUp' || e.key === 'w') { newOffset.y = Math.max(0, myOffset.y - step); }
-      if (e.key === 'ArrowDown' || e.key === 's') { newOffset.y = Math.min(ROWS - VIEW_ROWS, myOffset.y + step); }
-      if (e.key === 'ArrowLeft' || e.key === 'a') { newOffset.x = Math.max(0, myOffset.x - step); }
-      if (e.key === 'ArrowRight' || e.key === 'd') { newOffset.x = Math.min(COLS - VIEW_COLS, myOffset.x + step); }
-      if (newOffset.x !== myOffset.x || newOffset.y !== myOffset.y) {
-        // Erase only previous body pixels
+      if (e.key === 'ArrowUp' || e.key === 'w') { newOffset.y = Math.max(0, myOffset.y - step); changed = true; }
+      if (e.key === 'ArrowDown' || e.key === 's') { newOffset.y = Math.min(ROWS - CAMERA_ROWS, myOffset.y + step); changed = true; }
+      if (e.key === 'ArrowLeft' || e.key === 'a') { newOffset.x = Math.max(0, myOffset.x - step); changed = true; }
+      if (e.key === 'ArrowRight' || e.key === 'd') { newOffset.x = Math.min(COLS - CAMERA_COLS, myOffset.x + step); changed = true; }
+      if (changed) {
+        // Erase previous body pixels
         let eraseDiffs = [];
         if (prevMask) {
-          for (let y = 0; y < VIEW_ROWS; y++) {
-            for (let x = 0; x < VIEW_COLS; x++) {
+          for (let y = 0; y < CAMERA_ROWS; y++) {
+            for (let x = 0; x < CAMERA_COLS; x++) {
               if (prevMask[y] && prevMask[y][x]) {
                 const gx = myOffset.x + x;
                 const gy = myOffset.y + y;
@@ -287,6 +279,7 @@
         prevOffset = { ...myOffset };
         myOffset = newOffset;
         renderStage();
+        renderMinimap();
       }
     });
 
