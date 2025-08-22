@@ -73,8 +73,20 @@
     let myId = null;
     let myOffset = { x: 0, y: 0 };
     let lastGrid = null;
-    let typingMode = false;
-
+    // Remove Typing Mode button and related logic
+    // Remove typingBtn, contentEditable, and input event
+    // Remove typingMode variable
+    // Remove keyboard controls that check typingMode
+    // Only keep camera mode and pool UI
+    // ...
+    // Remove Typing Mode button
+    document.getElementById('typing-btn').style.display = 'none';
+    // Remove contentEditable and input event
+    document.getElementById('stage').contentEditable = false;
+    // Remove typingMode variable and all related logic
+    // Remove typingBtn.onclick, stage.addEventListener('input'), and typingMode checks
+    // ... existing code ...
+    // Only keep camera mode, pool UI, and segmentation logic
     function renderStage(gridArr) {
       lastGrid = gridArr;
       document.getElementById('stage').textContent = gridArr.join('\n');
@@ -97,29 +109,6 @@
       }
     };
 
-    // Typing mode toggle
-    const typingBtn = document.getElementById('typing-btn');
-    const stage = document.getElementById('stage');
-    typingBtn.onclick = () => {
-      typingMode = !typingMode;
-      stage.contentEditable = typingMode ? 'true' : 'false';
-      typingBtn.textContent = typingMode ? 'Camera Mode' : 'Typing Mode';
-      if (!typingMode && lastGrid) {
-        // Restore grid from server when leaving typing mode
-        renderStage(lastGrid);
-      }
-    };
-
-    // Send edits in typing mode
-    stage.addEventListener('input', () => {
-      if (!typingMode) return;
-      // Parse edited ASCII grid and send as collaborative edit
-      const lines = stage.textContent.split('\n').slice(0, ROWS);
-      while (lines.length < ROWS) lines.push(' '.repeat(COLS));
-      const grid = lines.map(line => (line + ' '.repeat(COLS)).slice(0, COLS));
-      ws.send(JSON.stringify({ type: 'edit', grid }));
-    });
-
     // Reset button
     document.getElementById('reset-btn').onclick = () => {
       ws.send(JSON.stringify({ type: 'reset' }));
@@ -127,7 +116,6 @@
 
     // Keyboard controls for moving offset (only in camera mode)
     document.addEventListener('keydown', (e) => {
-      if (typingMode) return;
       let changed = false;
       if (e.key === 'ArrowUp' || e.key === 'w') { myOffset.y = Math.max(0, myOffset.y - 2); changed = true; }
       if (e.key === 'ArrowDown' || e.key === 's') { myOffset.y = Math.min(200 - 60, myOffset.y + 2); changed = true; }
@@ -157,15 +145,15 @@
     // Camera setup
     const camera = new Camera(video, {
       onFrame: async () => {
-        if (!typingMode) await selfieSegmentation.send({ image: video });
+        await selfieSegmentation.send({ image: video });
       },
       width: 640,
       height: 480
     });
     camera.start();
 
+    let cachedGrid = Array.from({ length: ROWS }, () => Array(COLS).fill('.'));
     function onSegmentationResults(results) {
-      if (typingMode) return;
       // Draw the mask to maskCanvas
       maskCtx.clearRect(0, 0, COLS, ROWS);
       maskCtx.drawImage(results.segmentationMask, 0, 0, COLS, ROWS);
@@ -173,13 +161,13 @@
       ctx.drawImage(video, 0, 0, COLS, ROWS);
       const imgData = ctx.getImageData(0, 0, COLS, ROWS).data;
       const maskData = maskCtx.getImageData(0, 0, COLS, ROWS).data;
-      const asciiGrid = [];
+      let diffs = [];
       for (let y = 0; y < ROWS; y++) {
-        let row = '';
         for (let x = 0; x < COLS; x++) {
           const idx = (y * COLS + x) * 4;
           // Use mask alpha to determine if this pixel is person or background
           const isPerson = maskData[idx + 3] > 128 && maskData[idx] > 128;
+          let char = '.';
           if (isPerson) {
             const r = imgData[idx];
             const g = imgData[idx + 1];
@@ -187,15 +175,17 @@
             // Luminance
             const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             const charIdx = Math.floor((lum / 255) * (ASCII_CHARS.length - 1));
-            row += ASCII_CHARS[charIdx];
-          } else {
-            row += '.';
+            char = ASCII_CHARS[charIdx];
+          }
+          if (cachedGrid[y][x] !== char) {
+            diffs.push({ x, y, char });
+            cachedGrid[y][x] = char;
           }
         }
-        asciiGrid.push(row);
       }
-      // In camera mode, send region update
-      sendRegion(asciiGrid, myOffset.x, myOffset.y);
+      if (diffs.length > 0) {
+        ws.send(JSON.stringify({ type: 'diff', diffs }));
+      }
     }
 
     // Pool UI logic
